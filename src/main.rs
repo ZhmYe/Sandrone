@@ -9,32 +9,33 @@ use std::time::{SystemTime, UNIX_EPOCH};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const CONFIG_PATH: &str = ".codex-auto-dev/config.toml";
-const STATE_PATH: &str = ".codex-auto-dev/state/items.tsv";
+const STATE_PATH: &str = ".codex-auto-dev/state/requests.tsv";
 const DEV_REPO: &str = "dev/repo";
 const WORKTREES: &str = "dev/worktrees";
 const ISSUE_TOOL: &str = "tools/issue-update.sh";
 const WORKFLOW_SKILL: &str = "skills/codex-auto-dev-workflow/SKILL.md";
+const WORKFLOW_SKILL_CONTENT: &str = include_str!("../skills/codex-auto-dev-workflow/SKILL.md");
 
 #[derive(Clone, Debug)]
 struct Config {
+    repo_name: String,
     git_url: String,
     base_branch: String,
-    required_approvals: usize,
 }
 
 #[derive(Clone, Debug)]
-struct WorkItem {
-    id: String,
+struct Request {
+    request_id: String,
     external_id: String,
     source: String,
     title: String,
     body: String,
     url: String,
     status: String,
-    proposal_path: String,
+    change_name: String,
+    change_path: String,
     branch: String,
     worktree_path: String,
-    approvals: Vec<String>,
     created_at: String,
     updated_at: String,
 }
@@ -52,19 +53,13 @@ fn run() -> Result<()> {
     let args: Vec<String> = args.collect();
 
     match command.as_str() {
-        "init" => init(&args),
-        "new" => new_project(&args),
-        "update" => update(),
-        "request" => request(&args),
-        "list" => list(),
+        "new" => new_workspace(&args),
+        "update" => update_requests(),
+        "plan" => create_plan_packet(&args),
+        "start" => start_worktree(&args),
+        "finish" => finish_request(&args),
+        "list" => list_requests(),
         "status" => status(&args),
-        "codegraph" => codegraph(&args),
-        "plan" => plan(&args),
-        "approve" => approve(&args),
-        "start" => start(&args),
-        "github-create" => github_create(&args),
-        "push" => push(&args),
-        "tick" => tick(),
         "validate" => validate(),
         "help" | "--help" | "-h" => {
             print_help();
@@ -77,170 +72,82 @@ fn run() -> Result<()> {
     }
 }
 
-fn init(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return usage("init <git-url> [base-branch]");
+fn new_workspace(args: &[String]) -> Result<()> {
+    ensure_allowed_flags(args, &["--url", "--name"])?;
+    let url = flag_value(args, "--url")?;
+    let name = flag_value(args, "--name")?;
+
+    match (url, name) {
+        (Some(_), Some(_)) => usage("new (--url <git-url> | --name <project-name>)"),
+        (None, None) => usage("new (--url <git-url> | --name <project-name>)"),
+        (Some(git_url), None) => initialize_cloned_workspace(&git_url),
+        (None, Some(repo_name)) => initialize_empty_workspace(&repo_name),
     }
+}
 
-    let git_url = args[0].clone();
-    let base_branch = args.get(1).cloned().unwrap_or_else(|| "main".to_string());
-
-    fs::create_dir_all(".codex-auto-dev/state")?;
-    fs::create_dir_all("dev")?;
-    fs::create_dir_all(WORKTREES)?;
-    fs::create_dir_all("docs/proposals")?;
-    fs::create_dir_all("tools")?;
-    fs::create_dir_all("skills/codex-auto-dev-workflow")?;
-
+fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
+    prepare_workspace_dirs()?;
     if !Path::new(DEV_REPO).exists() {
         run_command(
             Command::new("git")
-                .args(["clone", &git_url, DEV_REPO])
+                .args(["clone", git_url, DEV_REPO])
                 .envs(proxy_env()),
         )?;
     }
-
-    if !Path::new(CONFIG_PATH).exists() {
-        fs::write(
-            CONFIG_PATH,
-            format!(
-                "git_url = \"{}\"\nbase_branch = \"{}\"\nrequired_approvals = 1\n",
-                toml_escape(&git_url),
-                toml_escape(&base_branch)
-            ),
-        )?;
-    }
-
-    if !Path::new(STATE_PATH).exists() {
-        save_items(&[])?;
-    }
-
+    let repo_name = repo_name_from_url(git_url);
+    write_config(&repo_name, git_url, "main")?;
+    ensure_state_file()?;
     write_default_issue_tool()?;
     write_default_workflow_skill()?;
-    save_proposal_index(&load_items()?)?;
-    if let Err(error) = generate_codegraph_docs(false) {
-        eprintln!("codegraph warning: {error}");
-    }
 
-    println!("Initialized codex-auto-dev workspace");
+    println!("Created codex-auto-dev workspace");
+    println!("  mode: clone");
+    println!("  workspace naming: arbitrary outer workspace name is OK for cloned repositories");
     println!("  repo: {DEV_REPO}");
     println!("  issue tool: {ISSUE_TOOL}");
     println!("  workflow skill: {WORKFLOW_SKILL}");
+    println!("  next: codex-auto-dev update");
     Ok(())
 }
 
-fn new_project(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return usage("new <project-name> [base-branch]");
+fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
+    if repo_name.trim().is_empty() {
+        return Err("project name must not be empty".into());
     }
 
-    let project_name = args[0].clone();
-    let base_branch = args.get(1).cloned().unwrap_or_else(|| "main".to_string());
-    let git_url = format!("local:{project_name}");
-
-    fs::create_dir_all(".codex-auto-dev/state")?;
-    fs::create_dir_all("dev")?;
-    fs::create_dir_all(WORKTREES)?;
-    fs::create_dir_all("docs/proposals")?;
-    fs::create_dir_all("tools")?;
-    fs::create_dir_all("skills/codex-auto-dev-workflow")?;
-
+    prepare_workspace_dirs()?;
     if !Path::new(DEV_REPO).exists() {
         fs::create_dir_all(DEV_REPO)?;
         run_command(Command::new("git").arg("init").current_dir(DEV_REPO))?;
         run_command(
             Command::new("git")
-                .args(["checkout", "-B", &base_branch])
-                .current_dir(DEV_REPO),
-        )?;
-        fs::write(
-            Path::new(DEV_REPO).join("README.md"),
-            format!("# {project_name}\n\nCreated by codex-auto-dev.\n"),
-        )?;
-        run_command(
-            Command::new("git")
-                .args(["config", "user.name", "codex-auto-dev"])
-                .current_dir(DEV_REPO),
-        )?;
-        run_command(
-            Command::new("git")
-                .args(["config", "user.email", "codex-auto-dev@example.local"])
-                .current_dir(DEV_REPO),
-        )?;
-        run_command(
-            Command::new("git")
-                .args(["add", "README.md"])
-                .current_dir(DEV_REPO),
-        )?;
-        run_command(
-            Command::new("git")
-                .args(["commit", "-m", "Initial project scaffold"])
+                .args(["checkout", "-B", "main"])
                 .current_dir(DEV_REPO),
         )?;
     }
-
-    if !Path::new(CONFIG_PATH).exists() {
-        fs::write(
-            CONFIG_PATH,
-            format!(
-                "git_url = \"{}\"\nbase_branch = \"{}\"\nrequired_approvals = 1\n",
-                toml_escape(&git_url),
-                toml_escape(&base_branch)
-            ),
-        )?;
-    }
-
-    if !Path::new(STATE_PATH).exists() {
-        save_items(&[])?;
-    }
-
+    write_config(repo_name, &format!("local:{repo_name}"), "main")?;
+    ensure_state_file()?;
     write_default_issue_tool()?;
     write_default_workflow_skill()?;
-    save_proposal_index(&load_items()?)?;
-    if let Err(error) = generate_codegraph_docs(false) {
-        eprintln!("codegraph warning: {error}");
-    }
 
-    println!("Created new codex-auto-dev project workspace");
-    println!("  project: {project_name}");
+    println!("Created codex-auto-dev workspace");
+    println!("  mode: empty");
+    println!("  project name: {repo_name}");
+    println!("  workspace naming: use an outer workspace directory named {repo_name}-auto-dev");
+    println!("  target git repository name: {repo_name}");
     println!("  repo: {DEV_REPO}");
-    println!("  next: codex-auto-dev request \"Your first requirement\" \"Details...\"");
+    println!("  issue tool: {ISSUE_TOOL}");
+    println!("  workflow skill: {WORKFLOW_SKILL}");
+    println!(
+        "  next: codex-auto-dev plan --name {}-initial-plan --request_id REQ-0001",
+        today()
+    );
     Ok(())
 }
 
-fn request(args: &[String]) -> Result<()> {
+fn update_requests() -> Result<()> {
     ensure_initialized()?;
-    if args.is_empty() {
-        return usage("request <title> [body]");
-    }
-    let mut items = load_items()?;
-    let id = next_id(&items);
-    let title = args[0].clone();
-    let body = args.get(1..).unwrap_or(&[]).join(" ");
-    let now = now_string();
-    items.push(WorkItem {
-        id: id.clone(),
-        external_id: format!("manual:{id}"),
-        source: "manual".to_string(),
-        title,
-        body,
-        url: String::new(),
-        status: "discovered".to_string(),
-        proposal_path: String::new(),
-        branch: String::new(),
-        worktree_path: String::new(),
-        approvals: Vec::new(),
-        created_at: now.clone(),
-        updated_at: now,
-    });
-    save_items(&items)?;
-    println!("Created request {id}");
-    Ok(())
-}
-
-fn update() -> Result<()> {
-    ensure_initialized()?;
-    let mut items = load_items()?;
+    let mut requests = load_requests()?;
     let output = Command::new("sh").arg(ISSUE_TOOL).output()?;
     if !output.status.success() {
         return Err(format!(
@@ -250,12 +157,11 @@ fn update() -> Result<()> {
         .into());
     }
 
-    let mut by_external_id = items
+    let mut by_external_id = requests
         .iter()
         .enumerate()
-        .map(|(index, item)| (item.external_id.clone(), index))
+        .map(|(index, request)| (request.external_id.clone(), index))
         .collect::<BTreeMap<_, _>>();
-
     let stdout = String::from_utf8(output.stdout)?;
     let mut created = 0;
     let mut updated = 0;
@@ -268,27 +174,27 @@ fn update() -> Result<()> {
 
         let external_id = fields[0].clone();
         if let Some(index) = by_external_id.get(&external_id).copied() {
-            items[index].source = fields[1].clone();
-            items[index].title = fields[2].clone();
-            items[index].body = fields[3].clone();
-            items[index].url = fields[4].clone();
-            items[index].updated_at = now_string();
+            requests[index].source = fields[1].clone();
+            requests[index].title = fields[2].clone();
+            requests[index].body = fields[3].clone();
+            requests[index].url = fields[4].clone();
+            requests[index].updated_at = now_string();
             updated += 1;
         } else {
-            let id = next_id(&items);
-            by_external_id.insert(external_id.clone(), items.len());
-            items.push(WorkItem {
-                id,
+            let request_id = next_request_id(&requests);
+            by_external_id.insert(external_id.clone(), requests.len());
+            requests.push(Request {
+                request_id,
                 external_id,
                 source: fields[1].clone(),
                 title: fields[2].clone(),
                 body: fields[3].clone(),
                 url: fields[4].clone(),
                 status: "discovered".to_string(),
-                proposal_path: String::new(),
+                change_name: String::new(),
+                change_path: String::new(),
                 branch: String::new(),
                 worktree_path: String::new(),
-                approvals: Vec::new(),
                 created_at: now_string(),
                 updated_at: now_string(),
             });
@@ -296,564 +202,435 @@ fn update() -> Result<()> {
         }
     }
 
-    save_items(&items)?;
+    save_requests(&requests)?;
     println!("Update complete: {created} new, {updated} refreshed");
+    for request in requests
+        .iter()
+        .filter(|request| request.status == "discovered")
+    {
+        println!("  {} {}", request.request_id, request.title);
+    }
     Ok(())
 }
 
-fn list() -> Result<()> {
+fn create_plan_packet(args: &[String]) -> Result<()> {
     ensure_initialized()?;
-    let items = load_items()?;
-    if items.is_empty() {
-        println!("No work items yet. Run: codex-auto-dev update");
-        return Ok(());
+    ensure_allowed_flags(args, &["--name", "--request_id", "--request-id"])?;
+    let change_name = required_flag(args, "--name")?;
+    let request_id = required_request_id(args)?;
+    validate_change_name(&change_name)?;
+
+    let mut requests = load_requests()?;
+    let index = match find_request_index(&requests, &request_id) {
+        Some(index) => index,
+        None => {
+            requests.push(manual_request(&request_id, &change_name));
+            requests.len() - 1
+        }
+    };
+
+    let mut request = requests[index].clone();
+    request.change_name = change_name.clone();
+    request.change_path = format!("docs/changes/{change_name}");
+    request.status = "planning".to_string();
+    request.updated_at = now_string();
+    generate_plan_packet(&request)?;
+    requests[index] = request.clone();
+    save_requests(&requests)?;
+
+    println!("Planning packet ready for {}", request.request_id);
+    println!("  change path: {}", request.change_path);
+    println!("  plan template: {}/plan.md", request.change_path);
+    println!("  handoff: {}/thread-handoff.md", request.change_path);
+    println!("  Codex must fill the templates and stop for plan approval.");
+    Ok(())
+}
+
+fn start_worktree(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let config = load_config()?;
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, &request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+
+    if request.change_path.is_empty() {
+        return Err(format!(
+            "{} has no change packet. Run: codex-auto-dev plan --name {}-short-name --request_id {}",
+            request.request_id,
+            today(),
+            request.request_id
+        )
+        .into());
     }
 
-    for item in items {
-        println!("{:<8} {:<16} {}", item.id, item.status, item.title);
+    let branch = format!("codex/{}", request.request_id.to_lowercase());
+    let worktree_path = Path::new(WORKTREES).join(&request.request_id);
+    fs::create_dir_all(WORKTREES)?;
+    let absolute_worktree = env::current_dir()?.join(&worktree_path);
+    let absolute_worktree_string = absolute_worktree.to_string_lossy().to_string();
+
+    let existing = git_output(DEV_REPO, &["worktree", "list", "--porcelain"])?;
+    if !existing.contains(&format!("worktree {absolute_worktree_string}")) {
+        fetch_if_remote_exists()?;
+        if git_output(DEV_REPO, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+            let base_ref =
+                if git_output(DEV_REPO, &["rev-parse", "--verify", &config.base_branch]).is_ok() {
+                    config.base_branch.clone()
+                } else {
+                    "HEAD".to_string()
+                };
+            run_command(
+                Command::new("git")
+                    .args([
+                        "worktree",
+                        "add",
+                        "-B",
+                        &branch,
+                        &absolute_worktree_string,
+                        &base_ref,
+                    ])
+                    .current_dir(DEV_REPO),
+            )?;
+        } else {
+            run_command(
+                Command::new("git")
+                    .args([
+                        "worktree",
+                        "add",
+                        "--orphan",
+                        "-B",
+                        &branch,
+                        &absolute_worktree_string,
+                    ])
+                    .current_dir(DEV_REPO),
+            )?;
+        }
+    }
+
+    request.branch = branch;
+    request.worktree_path = worktree_path.to_string_lossy().to_string();
+    request.status = "in-progress".to_string();
+    request.updated_at = now_string();
+    generate_start_packet(&request)?;
+    requests[index] = request.clone();
+    save_requests(&requests)?;
+
+    println!("Worktree ready for {}", request.request_id);
+    println!("  worktree: {}", request.worktree_path);
+    println!("  branch: {}", request.branch);
+    println!(
+        "  start instructions: {}/codex-start.md",
+        request.change_path
+    );
+    println!("  Codex must implement in the worktree and stop for change-doc approval.");
+    Ok(())
+}
+
+fn finish_request(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, &request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let request = &mut requests[index];
+    request.status = "finished".to_string();
+    request.updated_at = now_string();
+    let change_path = request.change_path.clone();
+    let worktree_path = request.worktree_path.clone();
+    let branch = request.branch.clone();
+    save_requests(&requests)?;
+
+    println!("{request_id} marked finished.");
+    println!("  change doc: {change_path}/change-doc.md");
+    println!("  worktree: {worktree_path}");
+    println!("  branch: {branch}");
+    println!("  No commit, push, PR, or merge was performed.");
+    Ok(())
+}
+
+fn list_requests() -> Result<()> {
+    ensure_initialized()?;
+    let requests = load_requests()?;
+    if requests.is_empty() {
+        println!("No requests yet. Run: codex-auto-dev update");
+        return Ok(());
+    }
+    for request in requests {
+        println!(
+            "{:<9} {:<12} {}",
+            request.request_id, request.status, request.title
+        );
     }
     Ok(())
 }
 
 fn status(args: &[String]) -> Result<()> {
     ensure_initialized()?;
-    let items = load_items()?;
+    let requests = load_requests()?;
     if args.is_empty() {
         let config = load_config()?;
-        println!("repo: {}", config.git_url);
+        println!("repo_name: {}", config.repo_name);
+        println!("git_url: {}", config.git_url);
         println!("base_branch: {}", config.base_branch);
         let mut counts = BTreeMap::<String, usize>::new();
-        for item in items {
-            *counts.entry(item.status).or_default() += 1;
+        for request in requests {
+            *counts.entry(request.status).or_default() += 1;
         }
-        if counts.is_empty() {
-            println!("No work items yet.");
-        } else {
-            for (status, count) in counts {
-                println!("{status}: {count}");
-            }
+        for (status, count) in counts {
+            println!("{status}: {count}");
         }
         return Ok(());
     }
 
-    let item = find_item(&items, &args[0])?;
-    println!("id: {}", item.id);
-    println!("external_id: {}", item.external_id);
-    println!("source: {}", item.source);
-    println!("status: {}", item.status);
-    println!("title: {}", item.title);
-    println!("url: {}", item.url);
-    println!("proposal_path: {}", item.proposal_path);
-    println!("branch: {}", item.branch);
-    println!("worktree_path: {}", item.worktree_path);
-    println!("approvals: {}", item.approvals.join(","));
-    Ok(())
-}
-
-fn plan(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    if args.is_empty() {
-        return usage("plan <id>");
-    }
-
-    let mut items = load_items()?;
-    let index = find_item_index(&items, &args[0])?;
-    let mut item = items[index].clone();
-    if item.proposal_path.is_empty() {
-        item.proposal_path = format!("docs/proposals/{}/{}", today(), item.id);
-    }
-    generate_plan_artifacts(&item)?;
-    item.status = "plan_ready".to_string();
-    item.updated_at = now_string();
-    items[index] = item.clone();
-    save_items(&items)?;
-    save_proposal_index(&items)?;
-    println!("Plan ready for {}: {}/plan.md", item.id, item.proposal_path);
-    Ok(())
-}
-
-fn approve(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    if args.is_empty() {
-        return usage("approve <id> [voter]");
-    }
-
-    let config = load_config()?;
-    let mut items = load_items()?;
-    let index = find_item_index(&items, &args[0])?;
-    let voter = args.get(1).cloned().unwrap_or_else(|| "local".to_string());
-    let item = &mut items[index];
-
-    if item.proposal_path.is_empty() || !Path::new(&item.proposal_path).join("plan.md").exists() {
-        return Err(format!(
-            "{} has no plan yet. Run: codex-auto-dev plan {}",
-            item.id, item.id
-        )
-        .into());
-    }
-
-    if !item.approvals.contains(&voter) {
-        item.approvals.push(voter);
-    }
-
-    if item.approvals.len() >= config.required_approvals {
-        item.status = "approved".to_string();
-    }
-    item.updated_at = now_string();
-    let id = item.id.clone();
-    let status = item.status.clone();
-    let approvals = item.approvals.len();
-    save_items(&items)?;
-    save_proposal_index(&items)?;
-    println!(
-        "{id}: {approvals}/{} approvals, status={status}",
-        config.required_approvals
-    );
-    Ok(())
-}
-
-fn start(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    if args.is_empty() {
-        return usage("start <id>");
-    }
-
-    let config = load_config()?;
-    let mut items = load_items()?;
-    let index = find_item_index(&items, &args[0])?;
-    let mut item = items[index].clone();
-    if item.status != "approved"
-        && item.status != "in_progress"
-        && item.status != "change_doc_ready"
-    {
-        return Err(format!("{} must be approved before start.", item.id).into());
-    }
-
-    if item.proposal_path.is_empty() {
-        item.proposal_path = format!("docs/proposals/{}/{}", today(), item.id);
-    }
-
-    if should_refresh_codegraph(&item)? {
-        if let Err(error) = generate_codegraph_docs(true) {
-            eprintln!("codegraph warning: {error}");
-        }
-    }
-
-    let branch = format!("codex/{}", item.id.to_lowercase());
-    let worktree_path = Path::new(WORKTREES).join(&item.id);
-    fs::create_dir_all(WORKTREES)?;
-    let worktree_string = worktree_path.to_string_lossy().to_string();
-    let existing = git_output(DEV_REPO, &["worktree", "list", "--porcelain"])?;
-    if !existing.contains(&worktree_string) {
-        run_command(
-            Command::new("git")
-                .args(["fetch", "--all", "--prune"])
-                .current_dir(DEV_REPO)
-                .envs(proxy_env()),
-        )?;
-        let base_ref =
-            if git_output(DEV_REPO, &["rev-parse", "--verify", &config.base_branch]).is_ok() {
-                config.base_branch.clone()
-            } else {
-                "HEAD".to_string()
-            };
-        run_command(
-            Command::new("git")
-                .args([
-                    "worktree",
-                    "add",
-                    "-B",
-                    &branch,
-                    &worktree_string,
-                    &base_ref,
-                ])
-                .current_dir(DEV_REPO),
-        )?;
-    }
-
-    item.branch = branch;
-    item.worktree_path = worktree_string;
-    item.status = "in_progress".to_string();
-    item.updated_at = now_string();
-    generate_start_instructions(&item)?;
-    generate_change_doc(&item)?;
-    items[index] = item.clone();
-    save_items(&items)?;
-    save_proposal_index(&items)?;
-
-    println!("Started {} in {}", item.id, item.worktree_path);
-    println!("Codex should now use {WORKFLOW_SKILL} and work only inside this worktree.");
-    Ok(())
-}
-
-fn codegraph(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    let refresh = args.iter().any(|arg| arg == "--refresh" || arg == "-r");
-    generate_codegraph_docs(refresh)?;
-    println!("CodeGraph documents updated under docs/codegraph");
-    Ok(())
-}
-
-fn github_create(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    let repo_name = args.first().cloned().unwrap_or_else(|| repo_dir_name());
-    let visibility = if args.iter().any(|arg| arg == "--public") {
-        "--public"
-    } else {
-        "--private"
-    };
-    let output = Command::new("gh")
-        .args([
-            "repo", "create", &repo_name, visibility, "--source", DEV_REPO, "--remote", "origin",
-        ])
-        .envs(proxy_env())
-        .output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "gh repo create failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-    println!("{}", String::from_utf8_lossy(&output.stdout).trim());
-    Ok(())
-}
-
-fn push(args: &[String]) -> Result<()> {
-    ensure_initialized()?;
-    let message = if args.is_empty() {
-        "Update project".to_string()
-    } else {
-        args.join(" ")
-    };
-    run_command(Command::new("git").args(["add", "."]).current_dir(DEV_REPO))?;
-    let status = git_output(DEV_REPO, &["status", "--short"])?;
-    if status.trim().is_empty() {
-        println!("No changes to push.");
-        return Ok(());
-    }
-    run_command(
-        Command::new("git")
-            .args(["commit", "-m", &message])
-            .current_dir(DEV_REPO),
-    )?;
-    run_command(
-        Command::new("git")
-            .args(["push", "-u", "origin", "HEAD"])
-            .current_dir(DEV_REPO)
-            .envs(proxy_env()),
-    )?;
-    println!("Pushed dev repository changes.");
-    Ok(())
-}
-
-fn tick() -> Result<()> {
-    ensure_initialized()?;
-    update()?;
-    let mut items = load_items()?;
-    let discovered: Vec<String> = items
+    let request_id = &args[0];
+    let request = requests
         .iter()
-        .filter(|item| item.status == "discovered")
-        .map(|item| item.id.clone())
-        .collect();
-    for id in &discovered {
-        plan(&[id.clone()])?;
-    }
-
-    items = load_items()?;
-    let approved: Vec<String> = items
-        .iter()
-        .filter(|item| item.status == "approved")
-        .map(|item| item.id.clone())
-        .collect();
-
-    println!("Tick summary:");
-    println!("  planned: {}", discovered.len());
-    println!("  approved waiting for start: {}", approved.len());
-    for id in approved {
-        println!("  next: codex-auto-dev start {id}");
-    }
+        .find(|request| request.request_id == *request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    println!("request_id: {}", request.request_id);
+    println!("external_id: {}", request.external_id);
+    println!("source: {}", request.source);
+    println!("status: {}", request.status);
+    println!("title: {}", request.title);
+    println!("url: {}", fallback_empty(&request.url, "n/a"));
+    println!("change_name: {}", request.change_name);
+    println!("change_path: {}", request.change_path);
+    println!("branch: {}", request.branch);
+    println!("worktree_path: {}", request.worktree_path);
     Ok(())
 }
 
 fn validate() -> Result<()> {
     ensure_initialized()?;
-    let items = load_items()?;
-    for item in items.iter().filter(|item| !item.proposal_path.is_empty()) {
+    let requests = load_requests()?;
+    for request in requests
+        .iter()
+        .filter(|request| !request.change_path.is_empty())
+    {
         for file in [
+            "issue.md",
             "spec.md",
             "plan.md",
             "tasks.md",
             "plan.html",
             "change-doc.md",
+            "codex-plan.md",
+            "thread-handoff.md",
         ] {
-            let path = Path::new(&item.proposal_path).join(file);
+            let path = Path::new(&request.change_path).join(file);
             if !path.exists() {
-                return Err(
-                    format!("{} missing required artifact: {}", item.id, path.display()).into(),
-                );
+                return Err(format!(
+                    "{} missing required artifact: {}",
+                    request.request_id,
+                    path.display()
+                )
+                .into());
             }
         }
     }
-    save_proposal_index(&items)?;
-    println!("validated {} work item(s)", items.len());
+    println!("validated {} request(s)", requests.len());
     Ok(())
 }
 
-fn generate_plan_artifacts(item: &WorkItem) -> Result<()> {
-    fs::create_dir_all(&item.proposal_path)?;
-    fs::write(
-        Path::new(&item.proposal_path).join("issue.md"),
-        render_issue(item),
-    )?;
-    fs::write(
-        Path::new(&item.proposal_path).join("spec.md"),
-        render_spec(item),
-    )?;
-    fs::write(
-        Path::new(&item.proposal_path).join("plan.md"),
-        render_plan(item),
-    )?;
-    fs::write(
-        Path::new(&item.proposal_path).join("tasks.md"),
-        render_tasks(item),
-    )?;
-    fs::write(
-        Path::new(&item.proposal_path).join("plan.html"),
-        render_plan_html(item),
-    )?;
-    fs::write(
-        Path::new(&item.proposal_path).join("change-doc.md"),
-        render_pending_change_doc(item),
-    )?;
+fn prepare_workspace_dirs() -> Result<()> {
+    fs::create_dir_all(".codex-auto-dev/state")?;
+    fs::create_dir_all("dev")?;
+    fs::create_dir_all(WORKTREES)?;
+    fs::create_dir_all("docs/changes")?;
+    fs::create_dir_all("tools")?;
+    fs::create_dir_all("skills/codex-auto-dev-workflow")?;
     Ok(())
 }
 
-fn generate_codegraph_docs(refresh: bool) -> Result<()> {
-    ensure_command("codegraph")?;
-    fs::create_dir_all("docs/codegraph")?;
-    let codegraph_dir = Path::new(DEV_REPO).join(".codegraph");
-    if !codegraph_dir.exists() {
-        run_command(
-            Command::new("codegraph")
-                .args(["init", "-i"])
-                .current_dir(DEV_REPO),
-        )?;
-    } else if refresh {
-        run_command(Command::new("codegraph").arg("sync").current_dir(DEV_REPO))?;
+fn write_config(repo_name: &str, git_url: &str, base_branch: &str) -> Result<()> {
+    if Path::new(CONFIG_PATH).exists() {
+        return Ok(());
     }
-
-    let status = command_output(
-        Command::new("codegraph")
-            .arg("status")
-            .current_dir(DEV_REPO),
-    )?;
-    let context = command_output(
-        Command::new("codegraph")
-            .args([
-                "context",
-                "repository architecture and implementation overview",
-            ])
-            .current_dir(DEV_REPO),
-    )
-    .unwrap_or_else(|error| format!("codegraph context failed: {error}"));
-
-    fs::write("docs/codegraph/status.txt", &status)?;
     fs::write(
-        "docs/codegraph/context.md",
-        render_codegraph_context(&status, &context),
-    )?;
-    fs::write(
-        "docs/codegraph/index.html",
-        render_codegraph_html(&status, &context),
+        CONFIG_PATH,
+        format!(
+            "repo_name = \"{}\"\ngit_url = \"{}\"\nbase_branch = \"{}\"\n",
+            toml_escape(repo_name),
+            toml_escape(git_url),
+            toml_escape(base_branch)
+        ),
     )?;
     Ok(())
 }
 
-fn should_refresh_codegraph(item: &WorkItem) -> Result<bool> {
-    if !Path::new("docs/codegraph/status.txt").exists() {
-        return Ok(true);
+fn ensure_state_file() -> Result<()> {
+    if !Path::new(STATE_PATH).exists() {
+        save_requests(&[])?;
     }
-    let text = format!("{} {}", item.title.to_lowercase(), item.body.to_lowercase());
-    let broad_terms = [
-        "architecture",
-        "refactor",
-        "rewrite",
-        "large",
-        "migration",
-        "cross-cutting",
-        "全局",
-        "重构",
-        "架构",
-        "大范围",
-        "迁移",
-    ];
-    Ok(broad_terms.iter().any(|term| text.contains(term)))
+    Ok(())
 }
 
-fn render_codegraph_context(status: &str, context: &str) -> String {
+fn generate_plan_packet(request: &Request) -> Result<()> {
+    fs::create_dir_all(&request.change_path)?;
+    fs::write(
+        Path::new(&request.change_path).join("issue.md"),
+        render_issue(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("spec.md"),
+        render_spec_template(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("plan.md"),
+        render_plan_template(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("tasks.md"),
+        render_tasks_template(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("plan.html"),
+        render_plan_html_template(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("change-doc.md"),
+        render_change_doc_template(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("codex-plan.md"),
+        render_codex_plan_prompt(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("thread-handoff.md"),
+        render_planning_handoff(request),
+    )?;
+    Ok(())
+}
+
+fn generate_start_packet(request: &Request) -> Result<()> {
+    fs::create_dir_all(&request.change_path)?;
+    fs::write(
+        Path::new(&request.change_path).join("codex-start.md"),
+        render_codex_start_prompt(request),
+    )?;
+    fs::write(
+        Path::new(&request.change_path).join("thread-handoff.md"),
+        render_implementation_handoff(request),
+    )?;
+    Ok(())
+}
+
+fn render_issue(request: &Request) -> String {
     format!(
-        "# CodeGraph Context\n\n## Status\n\n```text\n{}\n```\n\n## Repository Context\n\n```text\n{}\n```\n",
-        fallback_empty(status, "No status output."),
-        fallback_empty(context, "No context output."),
+        "# Request {request_id}: {title}\n\n- Request ID: `{request_id}`\n- External ID: `{external_id}`\n- Source: `{source}`\n- URL: {url}\n\n## Original Request\n\n{body}\n",
+        request_id = request.request_id,
+        title = request.title,
+        external_id = request.external_id,
+        source = request.source,
+        url = fallback_empty(&request.url, "n/a"),
+        body = fallback_empty(
+            &request.body,
+            "Codex should fill the concrete request from the user conversation or issue source."
+        ),
     )
 }
 
-fn render_codegraph_html(status: &str, context: &str) -> String {
+fn render_spec_template(request: &Request) -> String {
+    format!(
+        "# Spec: {title}\n\nThis is a template. Codex must replace placeholders after reading the request, target repository, CodeGraph docs when present, and target project documentation.\n\n## User Need\n\nFill in the concrete user need here.\n\n## Goals And Dependencies\n\nFill in observable goals, dependency order, and acceptance signals here.\n\n## Target Project Requirements\n\nFill in project-internal requirements discovered from README, CONTRIBUTING, AGENTS, docs, scripts, pre-commit config, and AI review process.\n\n## Acceptance Criteria\n\nFill in testable acceptance criteria here.\n",
+        title = request.title,
+    )
+}
+
+fn render_plan_template(request: &Request) -> String {
+    format!(
+        "# Plan: {title}\n\nThis is a planning template. Codex must fill it; `codex-auto-dev` does not generate the real plan.\n\n## Goal Dependency Graph\n\nFill in the ordered goals and dependencies here.\n\n## Repository Analysis\n\nFill in files, modules, existing patterns, and relevant target project documentation read.\n\n## Project-Internal Requirements\n\nFill in target project change doc, pre-commit, documentation checks, format/lint/test commands, and AI review requirements.\n\n## Planned Code Changes\n\nFill in exact files/modules and intended changes here.\n\n## Testing And Verification\n\nFill in unit, integration, negative, regression, security, pre-commit, documentation check, and AI review plan here.\n\n## Approval Gate\n\nStop after filling this plan and wait for user approval before running `codex-auto-dev start --request_id {request_id}`.\n",
+        title = request.title,
+        request_id = request.request_id,
+    )
+}
+
+fn render_tasks_template(request: &Request) -> String {
+    format!(
+        "# Tasks: {title}\n\nThis is a task template. Codex must replace it with concrete steps during planning.\n\n## Planning\n\n- [ ] Read `issue.md`.\n- [ ] Read target project documentation.\n- [ ] Fill `spec.md` and `plan.md` with concrete details.\n- [ ] Identify project-internal requirements.\n- [ ] Stop for user approval.\n\n## Implementation\n\n- [ ] Run `codex-auto-dev start --request_id {request_id}` only after plan approval.\n- [ ] Work only in the generated worktree.\n- [ ] Implement the approved plan.\n- [ ] Complete target project change docs when required.\n- [ ] Run required pre-commit, documentation checks, tests, and AI review.\n- [ ] Fill `change-doc.md` and stop for user approval.\n",
+        title = request.title,
+        request_id = request.request_id,
+    )
+}
+
+fn render_plan_html_template(request: &Request) -> String {
     format!(
         r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CodeGraph Context</title>
-  <style>
-    body {{ margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f7f9fc; }}
-    main {{ max-width: 1040px; margin: 0 auto; padding: 40px 24px; }}
-    section {{ margin-bottom: 18px; padding: 24px; border: 1px solid #d9e2ef; border-radius: 8px; background: #fff; }}
-    pre {{ white-space: pre-wrap; background: #eef2f7; border-radius: 6px; padding: 16px; overflow: auto; }}
-  </style>
-</head>
-<body>
-  <main>
-    <section>
-      <h1>CodeGraph Context</h1>
-      <p>Reusable code understanding generated from the target repository.</p>
-    </section>
-    <section>
-      <h2>Status</h2>
-      <pre>{}</pre>
-    </section>
-    <section>
-      <h2>Context</h2>
-      <pre>{}</pre>
-    </section>
-  </main>
-</body>
-</html>
-"#,
-        html_escape(fallback_empty(status, "No status output.")),
-        html_escape(fallback_empty(context, "No context output.")),
-    )
-}
-
-fn generate_start_instructions(item: &WorkItem) -> Result<()> {
-    fs::create_dir_all(&item.proposal_path)?;
-    fs::write(
-        Path::new(&item.proposal_path).join("codex-start.md"),
-        format!(
-            "# Codex Start Instructions: {id}\n\n- Worktree: `{worktree}`\n- Branch: `{branch}`\n- Proposal: `{proposal}`\n\nUse `{skill}`. Read `spec.md`, `plan.md`, and `tasks.md` before editing code. Write code only inside the worktree. Update `change-doc.md` when implementation work changes.\n",
-            id = item.id,
-            worktree = item.worktree_path,
-            branch = item.branch,
-            proposal = item.proposal_path,
-            skill = WORKFLOW_SKILL,
-        ),
-    )?;
-    Ok(())
-}
-
-fn generate_change_doc(item: &WorkItem) -> Result<()> {
-    let status = git_output(&item.worktree_path, &["status", "--short"]).unwrap_or_default();
-    let changed_files =
-        git_output(&item.worktree_path, &["diff", "--name-only"]).unwrap_or_default();
-    let diff_stat = git_output(&item.worktree_path, &["diff", "--stat"]).unwrap_or_default();
-    fs::write(
-        Path::new(&item.proposal_path).join("change-doc.md"),
-        format!(
-            "# Change Doc: {id}\n\n## Summary\n\n{title}\n\n## Implementation Status\n\nThis work item has been started in an isolated worktree. Codex should update this document as implementation progresses.\n\n## Worktree\n\n- Branch: `{branch}`\n- Path: `{worktree}`\n\n## Current Git Status\n\n```text\n{status}\n```\n\n## Changed Files\n\n```text\n{changed_files}\n```\n\n## Diff Stat\n\n```text\n{diff_stat}\n```\n\n## Validation\n\n- [ ] Run project-specific checks.\n- [ ] Review generated diff.\n- [ ] Confirm proposal acceptance criteria.\n",
-            id = item.id,
-            title = item.title,
-            branch = item.branch,
-            worktree = item.worktree_path,
-            status = fallback_empty(&status, "No working tree changes detected."),
-            changed_files = fallback_empty(&changed_files, "No changed files detected."),
-            diff_stat = fallback_empty(&diff_stat, "No diff stat available."),
-        ),
-    )?;
-    Ok(())
-}
-
-fn render_issue(item: &WorkItem) -> String {
-    format!(
-        "# {title}\n\n- ID: {id}\n- External ID: {external_id}\n- Source: {source}\n- URL: {url}\n\n## Body\n\n{body}\n",
-        title = item.title,
-        id = item.id,
-        external_id = item.external_id,
-        source = item.source,
-        url = fallback_empty(&item.url, "n/a"),
-        body = fallback_empty(&item.body, "_No body provided._"),
-    )
-}
-
-fn render_spec(item: &WorkItem) -> String {
-    format!(
-        "# Spec: {title}\n\n## User Need\n\n{body}\n\n## Scope\n\n- Analyze the linked work item.\n- Produce an implementation plan before code changes.\n- Keep implementation isolated to this work item's worktree.\n\n## Non-Goals\n\n- Do not modify `dev/repo` directly.\n- Do not create or merge PRs automatically.\n\n## Acceptance Criteria\n\n- [ ] Plan is approved before implementation.\n- [ ] Implementation happens in an isolated worktree.\n- [ ] Change doc records final changes and validation.\n\n## Open Questions\n\n- None recorded yet.\n",
-        title = item.title,
-        body = fallback_empty(&item.body, "Clarify the requested behavior."),
-    )
-}
-
-fn render_plan(item: &WorkItem) -> String {
-    format!(
-        "# Plan: {title}\n\n## Summary\n\nPrepare an isolated implementation for `{id}` after approval.\n\n## Technical Approach\n\n1. Inspect `dev/repo` to understand project structure.\n2. Identify files and tests relevant to the work item.\n3. After approval, create `dev/worktrees/{id}`.\n4. Implement changes only in the isolated worktree.\n5. Update `change-doc.md` with diff and validation details.\n\n## Validation\n\n- [ ] Run relevant project checks from the worktree.\n- [ ] Review `git diff`.\n\n## Risks\n\n- Requirements may need clarification.\n- The default issue tool may need replacing for non-GitHub platforms.\n",
-        title = item.title,
-        id = item.id,
-    )
-}
-
-fn render_tasks(item: &WorkItem) -> String {
-    format!(
-        "# Tasks: {title}\n\n- [ ] Review `issue.md`.\n- [ ] Review `spec.md`.\n- [ ] Review `plan.md`.\n- [ ] Wait for required approval votes.\n- [ ] Run `codex-auto-dev start {id}`.\n- [ ] Implement in the isolated worktree.\n- [ ] Update `change-doc.md`.\n",
-        title = item.title,
-        id = item.id,
-    )
-}
-
-fn render_plan_html(item: &WorkItem) -> String {
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{id} Plan</title>
+  <title>{request_id} Plan Template</title>
   <style>
     body {{ margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f7f9fc; }}
     main {{ max-width: 920px; margin: 0 auto; padding: 40px 24px; }}
     section {{ margin-bottom: 18px; padding: 24px; border: 1px solid #d9e2ef; border-radius: 8px; background: #fff; }}
     h1, h2 {{ margin-top: 0; }}
-    pre {{ background: #eef2f7; border-radius: 6px; padding: 16px; overflow: auto; }}
-    .badge {{ display: inline-block; padding: 4px 10px; border: 1px solid #9cc2ff; border-radius: 999px; color: #1558b0; background: #edf5ff; }}
+    code {{ background: #eef2f7; padding: 2px 5px; border-radius: 4px; }}
   </style>
 </head>
 <body>
   <main>
     <section>
-      <span class="badge">{status}</span>
       <h1>{title}</h1>
-      <p>{body}</p>
+      <p>This HTML file is a visual planning template. Codex fills the Markdown plan; this file marks where the human should review the plan.</p>
     </section>
     <section>
-      <h2>Flow</h2>
-      <pre>Issue -> Plan -> Approval -> Worktree -> Codex implementation -> Change doc</pre>
+      <h2>Gate</h2>
+      <p>Do not run <code>codex-auto-dev start --request_id {request_id}</code> until the user approves the completed plan.</p>
     </section>
   </main>
 </body>
 </html>
 "#,
-        id = html_escape(&item.id),
-        status = html_escape(&item.status),
-        title = html_escape(&item.title),
-        body = html_escape(fallback_empty(&item.body, "No body provided.")),
+        request_id = html_escape(&request.request_id),
+        title = html_escape(&request.title),
     )
 }
 
-fn render_pending_change_doc(item: &WorkItem) -> String {
+fn render_change_doc_template(request: &Request) -> String {
     format!(
-        "# Change Doc: {id}\n\n## Summary\n\n{title}\n\n## Status\n\nImplementation has not started yet. This document will be updated after approval and worktree execution.\n\n## Validation\n\n- [ ] Not started.\n",
-        id = item.id,
-        title = item.title,
+        "# Change Doc: {request_id}\n\nThis is a template. Codex must fill it after implementation and before asking for approval.\n\n## Summary\n\nFill in actual behavior and code changes here.\n\n## Files Changed\n\nFill in changed files here.\n\n## Target Project Requirements\n\n- Target project documentation read: fill in documents read.\n- Target project change doc: fill in path or `Not required`.\n- Pre-commit: fill in command and result or `Not required`.\n- Documentation checks: fill in commands and results or `Not required`.\n- Format/lint/test checks: fill in commands and results.\n- AI review: fill in findings, resolution status, or `Not required`.\n- All project-internal requirements completed: fill in yes/no with blockers.\n\n## Validation Evidence\n\nFill in exact commands and results here.\n\n## Approval Gate\n\nStop after filling this document and wait for user approval before running `codex-auto-dev finish --request_id {request_id}` or any commit/push/PR action.\n",
+        request_id = request.request_id,
+    )
+}
+
+fn render_codex_plan_prompt(request: &Request) -> String {
+    format!(
+        "# Codex Plan Prompt: {request_id}\n\nUse `skills/codex-auto-dev-workflow/SKILL.md`.\n\nYou are in planning only. `codex-auto-dev` created templates; you must fill them.\n\nRead `{change_path}/issue.md`, inspect `dev/repo`, read target project documentation, then fill `{change_path}/spec.md`, `{change_path}/plan.md`, and `{change_path}/tasks.md`.\n\nDo not write target code. Do not run `codex-auto-dev start`. Do not commit or push. Stop and give the user `{change_path}/plan.md` for approval.\n",
+        request_id = request.request_id,
+        change_path = request.change_path,
+    )
+}
+
+fn render_planning_handoff(request: &Request) -> String {
+    format!(
+        "# Thread Handoff: Planning {request_id}\n\nStart a new Codex thread with this prompt:\n\n```text\nUse skills/codex-auto-dev-workflow/SKILL.md.\nWorkspace: the current codex-auto-dev workspace.\nRequest ID: {request_id}.\nPhase: planning only.\nRead {change_path}/issue.md, spec.md, plan.md, tasks.md, and docs/codegraph/context.md if present.\nInspect dev/repo and read target project documentation.\nFill the templates with a concrete implementation plan, including project-internal requirements, target project change doc, pre-commit, checks, tests, AI review, risks, and rollback.\nDo not edit target code. Do not run start, finish, commit, push, or PR commands.\nWhen done, stop and give me {change_path}/plan.md for approval.\n```\n",
+        request_id = request.request_id,
+        change_path = request.change_path,
+    )
+}
+
+fn render_codex_start_prompt(request: &Request) -> String {
+    format!(
+        "# Codex Start Prompt: {request_id}\n\nUse `skills/codex-auto-dev-workflow/SKILL.md`.\n\nWorktree: `{worktree}`\nBranch: `{branch}`\nChange path: `{change_path}`\n\nThe user has approved the plan. Implement only inside the worktree. Re-read target project documentation, follow the approved plan, satisfy project-internal requirements, run required checks and AI review, then fill `{change_path}/change-doc.md` and stop for approval.\n\nDo not commit, push, create a PR, or merge.\n",
+        request_id = request.request_id,
+        worktree = request.worktree_path,
+        branch = request.branch,
+        change_path = request.change_path,
+    )
+}
+
+fn render_implementation_handoff(request: &Request) -> String {
+    format!(
+        "# Thread Handoff: Implementation {request_id}\n\nStart a new Codex thread with this prompt after plan approval:\n\n```text\nUse skills/codex-auto-dev-workflow/SKILL.md.\nWorkspace: the current codex-auto-dev workspace.\nRequest ID: {request_id}.\nPhase: implementation.\nWork only inside {worktree}.\nRead {change_path}/issue.md, spec.md, plan.md, tasks.md, codex-start.md, and docs/codegraph/context.md if present.\nRe-read target project documentation and satisfy all project-internal requirements from the approved plan.\nImplement exactly the approved plan. Do not edit dev/repo directly. Do not commit or push.\nRun required checks and tests, including target project pre-commit, documentation checks, and AI review when required.\nUpdate {change_path}/change-doc.md with files changed, target project change doc path, completed requirements, validation evidence, AI review findings and resolutions, risks, and follow-ups.\nWhen done, stop and give me the change-doc path for approval.\n```\n",
+        request_id = request.request_id,
+        change_path = request.change_path,
+        worktree = request.worktree_path,
     )
 }
 
@@ -867,6 +644,13 @@ fn write_default_issue_tool() -> Result<()> {
 set -eu
 
 cd dev/repo
+
+# Output TSV lines:
+# external_id<TAB>source<TAB>title<TAB>body<TAB>url
+#
+# Replace this script for Jira, Linear, internal workspaces, or other sources.
+# The connector should emit a stable external_id so repeated updates do not
+# create duplicate requests.
 
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 gh api "repos/${repo}/issues" -f state=open --jq '.[] | select(.pull_request == null) | ["github:" + "'${repo}'" + "#" + (.number|tostring), "github", .title, (.body // ""), .html_url] | @tsv'
@@ -882,40 +666,16 @@ fn write_default_workflow_skill() -> Result<()> {
     if Path::new(WORKFLOW_SKILL).exists() {
         return Ok(());
     }
-    fs::write(
-        WORKFLOW_SKILL,
-        r#"# codex-auto-dev-workflow
-
-Use this skill when maintaining a repository managed by `codex-auto-dev`.
-
-## Loop
-
-1. Run `codex-auto-dev status`.
-2. Run `codex-auto-dev update` or `codex-auto-dev tick`.
-3. For `plan_ready` items, stop and ask for approval.
-4. For `approved` items, run `codex-auto-dev start <id>`.
-5. Work only inside `dev/worktrees/<id>`.
-6. Read `docs/proposals/.../<id>/spec.md`, `plan.md`, and `tasks.md`.
-7. Implement the change, run relevant checks, and update `change-doc.md`.
-
-## Boundaries
-
-- Do not edit `dev/repo` directly.
-- Do not mix multiple issue implementations in one worktree.
-- Do not overwrite user changes.
-- Do not create or merge PRs unless explicitly requested.
-- If blocked, update `change-doc.md` and report the blocker.
-"#,
-    )?;
+    fs::write(WORKFLOW_SKILL, WORKFLOW_SKILL_CONTENT)?;
     Ok(())
 }
 
 fn load_config() -> Result<Config> {
     ensure_initialized()?;
     let content = fs::read_to_string(CONFIG_PATH)?;
+    let mut repo_name = String::new();
     let mut git_url = String::new();
     let mut base_branch = "main".to_string();
-    let mut required_approvals = 1;
 
     for line in content.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -924,28 +684,26 @@ fn load_config() -> Result<Config> {
         let key = key.trim();
         let value = value.trim().trim_matches('"');
         match key {
+            "repo_name" => repo_name = value.to_string(),
             "git_url" => git_url = value.to_string(),
             "base_branch" => base_branch = value.to_string(),
-            "required_approvals" => {
-                required_approvals = value.parse().unwrap_or(1);
-            }
             _ => {}
         }
     }
 
     Ok(Config {
+        repo_name,
         git_url,
         base_branch,
-        required_approvals,
     })
 }
 
-fn load_items() -> Result<Vec<WorkItem>> {
+fn load_requests() -> Result<Vec<Request>> {
     if !Path::new(STATE_PATH).exists() {
         return Ok(Vec::new());
     }
     let content = fs::read_to_string(STATE_PATH)?;
-    let mut items = Vec::new();
+    let mut requests = Vec::new();
     for line in content.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
@@ -954,132 +712,115 @@ fn load_items() -> Result<Vec<WorkItem>> {
         if fields.len() < 13 {
             continue;
         }
-        items.push(WorkItem {
-            id: fields[0].clone(),
+        requests.push(Request {
+            request_id: fields[0].clone(),
             external_id: fields[1].clone(),
             source: fields[2].clone(),
             title: fields[3].clone(),
             body: fields[4].clone(),
             url: fields[5].clone(),
             status: fields[6].clone(),
-            proposal_path: fields[7].clone(),
-            branch: fields[8].clone(),
-            worktree_path: fields[9].clone(),
-            approvals: fields[10]
-                .split('|')
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .collect(),
+            change_name: fields[7].clone(),
+            change_path: fields[8].clone(),
+            branch: fields[9].clone(),
+            worktree_path: fields[10].clone(),
             created_at: fields[11].clone(),
             updated_at: fields[12].clone(),
         });
     }
-    Ok(items)
+    Ok(requests)
 }
 
-fn save_items(items: &[WorkItem]) -> Result<()> {
+fn save_requests(requests: &[Request]) -> Result<()> {
     fs::create_dir_all(".codex-auto-dev/state")?;
-    let mut content = String::from("# codex-auto-dev items v1\n");
-    for item in items {
+    let mut content = String::from("# codex-auto-dev requests v2\n");
+    for request in requests {
         content.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            escape_field(&item.id),
-            escape_field(&item.external_id),
-            escape_field(&item.source),
-            escape_field(&item.title),
-            escape_field(&item.body),
-            escape_field(&item.url),
-            escape_field(&item.status),
-            escape_field(&item.proposal_path),
-            escape_field(&item.branch),
-            escape_field(&item.worktree_path),
-            escape_field(&item.approvals.join("|")),
-            escape_field(&item.created_at),
-            escape_field(&item.updated_at),
+            escape_field(&request.request_id),
+            escape_field(&request.external_id),
+            escape_field(&request.source),
+            escape_field(&request.title),
+            escape_field(&request.body),
+            escape_field(&request.url),
+            escape_field(&request.status),
+            escape_field(&request.change_name),
+            escape_field(&request.change_path),
+            escape_field(&request.branch),
+            escape_field(&request.worktree_path),
+            escape_field(&request.created_at),
+            escape_field(&request.updated_at),
         ));
     }
     fs::write(STATE_PATH, content)?;
     Ok(())
 }
 
-fn save_proposal_index(items: &[WorkItem]) -> Result<()> {
-    let proposals: Vec<&WorkItem> = items
+fn next_request_id(requests: &[Request]) -> String {
+    let next = requests
         .iter()
-        .filter(|item| !item.proposal_path.is_empty())
-        .collect();
-    let mut content = format!(
-        "{{\n  \"schema_version\": 1,\n  \"updated_at\": \"{}\",\n  \"proposals\": [\n",
-        today()
-    );
-    for (index, item) in proposals.iter().enumerate() {
-        let comma = if index + 1 == proposals.len() {
-            ""
-        } else {
-            ","
-        };
-        content.push_str(&format!(
-            "    {{\n      \"id\": \"{}\",\n      \"date\": \"{}\",\n      \"title\": \"{}\",\n      \"status\": \"{}\",\n      \"path\": \"{}\",\n      \"artifacts\": {{\n        \"spec_md\": \"{}/spec.md\",\n        \"plan_md\": \"{}/plan.md\",\n        \"tasks_md\": \"{}/tasks.md\",\n        \"plan_html\": \"{}/plan.html\",\n        \"change_doc_md\": \"{}/change-doc.md\"\n      }}\n    }}{}\n",
-            json_escape(&item.id),
-            json_escape(&proposal_date(item)),
-            json_escape(&item.title),
-            json_escape(&item.status),
-            json_escape(&item.proposal_path),
-            json_escape(&item.proposal_path),
-            json_escape(&item.proposal_path),
-            json_escape(&item.proposal_path),
-            json_escape(&item.proposal_path),
-            json_escape(&item.proposal_path),
-            comma,
-        ));
-    }
-    content.push_str("  ]\n}\n");
-    fs::write("proposal.json", content)?;
-    Ok(())
-}
-
-fn next_id(items: &[WorkItem]) -> String {
-    let next = items
-        .iter()
-        .filter_map(|item| item.id.strip_prefix("CAD-"))
+        .filter_map(|request| request.request_id.strip_prefix("REQ-"))
         .filter_map(|value| value.parse::<u32>().ok())
         .max()
         .unwrap_or(0)
         + 1;
-    format!("CAD-{next:04}")
+    format!("REQ-{next:04}")
 }
 
-fn find_item<'a>(items: &'a [WorkItem], id: &str) -> Result<&'a WorkItem> {
-    items
+fn find_request_index(requests: &[Request], request_id: &str) -> Option<usize> {
+    requests
         .iter()
-        .find(|item| item.id == id)
-        .ok_or_else(|| format!("unknown work item: {id}").into())
+        .position(|request| request.request_id == request_id)
 }
 
-fn find_item_index(items: &[WorkItem], id: &str) -> Result<usize> {
-    items
-        .iter()
-        .position(|item| item.id == id)
-        .ok_or_else(|| format!("unknown work item: {id}").into())
+fn manual_request(request_id: &str, change_name: &str) -> Request {
+    let now = now_string();
+    Request {
+        request_id: request_id.to_string(),
+        external_id: format!("manual:{request_id}"),
+        source: "manual".to_string(),
+        title: change_name.split('-').skip(3).collect::<Vec<_>>().join(" "),
+        body: "Codex should fill this request from the user conversation.".to_string(),
+        url: String::new(),
+        status: "discovered".to_string(),
+        change_name: String::new(),
+        change_path: String::new(),
+        branch: String::new(),
+        worktree_path: String::new(),
+        created_at: now.clone(),
+        updated_at: now,
+    }
 }
 
 fn ensure_initialized() -> Result<()> {
     if !Path::new(CONFIG_PATH).exists() {
-        return Err("not initialized. Run: codex-auto-dev init <git-url>".into());
+        return Err("not initialized. Run: codex-auto-dev new --url <git-url> or codex-auto-dev new --name <project-name>".into());
     }
     Ok(())
 }
 
-fn ensure_command(name: &str) -> Result<()> {
-    let output = Command::new(name).arg("--version").output();
-    match output {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(format!(
-            "{name} is installed but failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into()),
-        Err(error) => Err(format!("{name} is not available: {error}").into()),
+fn fetch_if_remote_exists() -> Result<()> {
+    let remotes = git_output(DEV_REPO, &["remote"]).unwrap_or_default();
+    if remotes.trim().is_empty() {
+        return Ok(());
     }
+    run_command(
+        Command::new("git")
+            .args(["fetch", "--all", "--prune"])
+            .current_dir(DEV_REPO)
+            .envs(proxy_env()),
+    )
+}
+
+fn run_command(command: &mut Command) -> Result<()> {
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .to_string()
+            .into());
+    }
+    Ok(())
 }
 
 fn git_output(cwd: &str, args: &[&str]) -> Result<String> {
@@ -1095,26 +836,80 @@ fn git_output(cwd: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
-fn run_command(command: &mut Command) -> Result<()> {
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .to_string()
-            .into());
+fn ensure_allowed_flags(args: &[String], allowed: &[&str]) -> Result<()> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if !arg.starts_with("--") {
+            return Err(format!("unexpected positional argument: {arg}").into());
+        }
+        if !allowed.iter().any(|allowed| *allowed == arg) {
+            return Err(format!("unknown flag: {arg}").into());
+        }
+        index += 2;
     }
     Ok(())
 }
 
-fn command_output(command: &mut Command) -> Result<String> {
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .to_string()
-            .into());
+fn flag_value(args: &[String], flag: &str) -> Result<Option<String>> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == flag {
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("{flag} requires a value").into());
+            };
+            if value.starts_with("--") {
+                return Err(format!("{flag} requires a value").into());
+            }
+            return Ok(Some(value.clone()));
+        }
+        index += 2;
     }
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    Ok(None)
+}
+
+fn required_flag(args: &[String], flag: &str) -> Result<String> {
+    flag_value(args, flag)?.ok_or_else(|| format!("{flag} is required").into())
+}
+
+fn required_request_id(args: &[String]) -> Result<String> {
+    if let Some(value) = flag_value(args, "--request_id")? {
+        return Ok(value);
+    }
+    required_flag(args, "--request-id")
+}
+
+fn validate_change_name(change_name: &str) -> Result<()> {
+    let bytes = change_name.as_bytes();
+    let date_shape = bytes.len() > 11
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(10) == Some(&b'-');
+    if !date_shape {
+        return Err("change name must use YYYY-MM-DD-short-english-name".into());
+    }
+    if !change_name
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return Err(
+            "change name must use lowercase ASCII letters, digits, and hyphens only".into(),
+        );
+    }
+    if change_name.contains("--") || change_name.ends_with('-') {
+        return Err("change name must not contain empty hyphen segments".into());
+    }
+    Ok(())
+}
+
+fn repo_name_from_url(git_url: &str) -> String {
+    let without_suffix = git_url.strip_suffix(".git").unwrap_or(git_url);
+    without_suffix
+        .rsplit(['/', ':'])
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("repo")
+        .to_string()
 }
 
 fn usage(command: &str) -> Result<()> {
@@ -1123,7 +918,7 @@ fn usage(command: &str) -> Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: codex-auto-dev <command>\n\nCommands:\n  init <git-url> [base-branch]\n  new <project-name> [base-branch]\n  update\n  request <title> [body]\n  tick\n  list\n  status [id]\n  codegraph [--refresh]\n  plan <id>\n  approve <id> [voter]\n  start <id>\n  github-create [repo-name] [--public]\n  push [commit-message]\n  validate"
+        "Usage: codex-auto-dev <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001>"
     );
 }
 
@@ -1135,10 +930,10 @@ fn proxy_env() -> Vec<(&'static str, String)> {
 }
 
 fn today() -> String {
-    if let Ok(output) = Command::new("date").arg("+%F").output() {
-        if output.status.success() {
-            return String::from_utf8_lossy(&output.stdout).trim().to_string();
-        }
+    if let Ok(output) = Command::new("date").arg("+%F").output()
+        && output.status.success()
+    {
+        return String::from_utf8_lossy(&output.stdout).trim().to_string();
     }
     "1970-01-01".to_string()
 }
@@ -1151,24 +946,6 @@ fn now_string() -> String {
         .to_string()
 }
 
-fn proposal_date(item: &WorkItem) -> String {
-    item.proposal_path
-        .split('/')
-        .nth(2)
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-fn repo_dir_name() -> String {
-    env::current_dir()
-        .ok()
-        .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().to_string())
-        })
-        .unwrap_or_else(|| "codex-auto-dev-project".to_string())
-}
-
 fn fallback_empty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     if value.trim().is_empty() {
         fallback
@@ -1179,15 +956,6 @@ fn fallback_empty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
 
 fn toml_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
 }
 
 fn html_escape(value: &str) -> String {

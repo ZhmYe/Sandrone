@@ -15,6 +15,20 @@
         "plan_html": "docs/proposals/2026-05-29/initial-rust-cli/plan.html",
         "change_doc_md": "docs/proposals/2026-05-29/initial-rust-cli/change-doc.md"
       }
+    },
+    {
+      "id": "strict-planning-prompts",
+      "date": "2026-05-29",
+      "title": "Strict Planning Prompts And Planning Templates",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-29/strict-planning-prompts",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-29/strict-planning-prompts/spec.md",
+        "plan_md": "docs/proposals/2026-05-29/strict-planning-prompts/plan.md",
+        "tasks_md": "docs/proposals/2026-05-29/strict-planning-prompts/tasks.md",
+        "plan_html": "docs/proposals/2026-05-29/strict-planning-prompts/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-29/strict-planning-prompts/change-doc.md"
+      }
     }
   ]
 }

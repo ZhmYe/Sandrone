@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tick Issue Agent</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172026; background: #f6f7f9; }
+    main { max-width: 980px; margin: 0 auto; padding: 40px 20px 56px; }
+    h1 { margin: 0 0 12px; font-size: 32px; }
+    h2 { margin-top: 28px; font-size: 20px; }
+    p, li { line-height: 1.7; }
+    code { background: #e8edf2; padding: 2px 5px; border-radius: 4px; }
+    .panel { background: #fff; border: 1px solid #d8dee6; border-radius: 8px; padding: 20px; margin-top: 18px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Tick Issue Agent</h1>
+    <p>本计划新增 heartbeat 主控命令和连续 issue-agent 子运行。</p>
+    <section class="panel">
+      <h2>主流程</h2>
+      <ul>
+        <li><code>tick</code> 负责 update、选择 request、生成文档包、启动 issue-agent。</li>
+        <li>issue-agent 在一个 Codex CLI 子运行中完成 plan 和 implementation。</li>
+        <li>通过 code-review 后停止在 waiting-finish，不自动 merge。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>PR Create Capability And Existing Detection</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.6; color: #202124; }
+    main { max-width: 920px; margin: 0 auto; }
+    h1, h2 { line-height: 1.2; }
+    code { background: #f4f4f5; padding: 2px 4px; border-radius: 4px; }
+    .box { border: 1px solid #d7dce2; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PR Create Capability And Existing Detection</h1>
+    <section class="box">
+      <h2>Connector 输出</h2>
+      <p><code>created&lt;TAB&gt;url</code> 或 <code>existing&lt;TAB&gt;url</code>。</p>
+    </section>
+    <section class="box">
+      <h2>默认行为</h2>
+      <p>GitHub 默认脚本先检查仓库能力和已有 PR，再创建。</p>
+    </section>
+    <section class="box">
+      <h2>兼容性</h2>
+      <p>旧脚本只输出 URL 时仍按 created 处理。</p>
+    </section>
+  </main>
+</body>
+</html>

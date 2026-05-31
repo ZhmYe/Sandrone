@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>Agent Exit Advance Hook</title>
+  </head>
+  <body>
+    <h1>Agent Exit Advance Hook</h1>
+    <p>让 agent 退出事件立即触发外层 advance，减少等待 heartbeat 的空档。</p>
+    <ol>
+      <li>tick 发现新 issue 并派发 agent。</li>
+      <li>agent 退出后 wrapper 写 exit code。</li>
+      <li>wrapper 调用 advance 推进 review、start、下一 phase 或 waiting-finish。</li>
+      <li>per-request lock 防止并发重复推进。</li>
+    </ol>
+  </body>
+</html>

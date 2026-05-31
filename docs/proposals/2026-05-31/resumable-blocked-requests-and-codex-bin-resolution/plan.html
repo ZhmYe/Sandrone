@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Resumable Blocked Requests And Codex Bin Resolution</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.6; color: #202124; }
+    main { max-width: 920px; margin: 0 auto; }
+    h1, h2 { line-height: 1.2; }
+    code { background: #f4f4f5; padding: 2px 4px; border-radius: 4px; }
+    .box { border: 1px solid #d7dce2; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Resumable Blocked Requests And Codex Bin Resolution</h1>
+    <section class="box">
+      <h2>Connector</h2>
+      <p>默认脚本通过环境变量或 PATH 解析 Codex CLI，不写死本机 app 路径。</p>
+    </section>
+    <section class="box">
+      <h2>Resume</h2>
+      <p>blocked request 恢复后会写回可派发状态，并可由 tick 继续处理。</p>
+    </section>
+    <section class="box">
+      <h2>安全性</h2>
+      <p>找不到 reviewer backend 时仍然 gate_unavailable，不绕过评审门禁。</p>
+    </section>
+  </main>
+</body>
+</html>

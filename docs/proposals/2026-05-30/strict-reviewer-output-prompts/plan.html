@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Strict Reviewer Output Prompts</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.6; color: #202124; }
+    main { max-width: 860px; }
+    h1 { font-size: 28px; }
+    section { border-top: 1px solid #ddd; padding-top: 16px; margin-top: 20px; }
+    code { background: #f5f5f5; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Strict Reviewer Output Prompts</h1>
+    <section>
+      <h2>目标</h2>
+      <p>让默认 reviewer prompt 的输出格式更严格、更清楚，并提供完整 JSON 示例。</p>
+    </section>
+    <section>
+      <h2>关键行为</h2>
+      <ul>
+        <li>三个 reviewer 都只能输出一个 JSON 对象。</li>
+        <li>schema 要求 <code>gate_unavailable</code> 并禁止额外字段。</li>
+        <li>每个 prompt 都包含 approved、rejected 和 gate unavailable 示例。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

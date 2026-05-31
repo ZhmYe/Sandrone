@@ -6,6 +6,7 @@ data/
 work-items/
 worktrees/
 .codex-auto-dev/
+.codegraph/
 dev/
 tools/
 skills/*

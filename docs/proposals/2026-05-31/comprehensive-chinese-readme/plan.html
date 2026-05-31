@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>Comprehensive Chinese README</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 40px; max-width: 960px; }
+      code, pre { background: #f6f8fa; border-radius: 6px; }
+      code { padding: 2px 4px; }
+      pre { padding: 16px; overflow: auto; }
+      h1, h2 { line-height: 1.25; }
+      li { margin: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Comprehensive Chinese README</h1>
+    <p>本 proposal 将 README 重写为完整中文用户手册，覆盖项目定位、架构、流程图、命令、环境配置、connector contract、自动化、恢复和治理。</p>
+    <h2>核心章节</h2>
+    <ul>
+      <li>项目作用与核心原则</li>
+      <li>workspace 目录结构</li>
+      <li>Mermaid 自动流程图和状态机图</li>
+      <li>安装、环境变量、代理和 CodeGraph</li>
+      <li>快速开始、命令参考、connector contract</li>
+      <li>自动化、finish/PR、升级、排障、安全质量要求</li>
+    </ul>
+    <h2>验证</h2>
+    <p>使用 <code>git diff --check</code> 和 <code>python3 scripts/validate_proposals.py</code> 验证文档格式与 proposal 索引。</p>
+  </body>
+</html>

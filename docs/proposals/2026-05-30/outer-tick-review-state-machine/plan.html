@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>Outer Tick Review State Machine</title>
+  </head>
+  <body>
+    <h1>Outer Tick Review State Machine</h1>
+    <p>将 reviewer gate 从子 Codex agent 中抽到外层 tick 状态机。</p>
+    <ol>
+      <li>先修 strict review schema。</li>
+      <li>再拆 planning / implementation agent phase。</li>
+      <li>最后由外层 tick 串联 submit、review、start 和 waiting-finish。</li>
+    </ol>
+  </body>
+</html>

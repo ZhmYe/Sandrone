@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>Codex CLI Environment Docs</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 40px; max-width: 920px; }
+      code, pre { background: #f6f8fa; border-radius: 6px; }
+      code { padding: 2px 4px; }
+      pre { padding: 16px; overflow: auto; }
+      h1, h2 { line-height: 1.25; }
+    </style>
+  </head>
+  <body>
+    <h1>Codex CLI Environment Docs</h1>
+    <p>本 proposal 为 README 增加 Codex CLI 环境变量配置说明，覆盖终端、GUI、LaunchAgent 和代理继承场景。</p>
+    <h2>关键配置</h2>
+    <pre><code># BEGIN codex-auto-dev
+export CODEX_AUTO_DEV_CODEX_APP="/Applications/Codex.app"
+if [ -d "/Applications/Codex.app/Contents/Resources" ]; then
+  case ":$PATH:" in
+    *":/Applications/Codex.app/Contents/Resources:"*) ;;
+    *) export PATH="/Applications/Codex.app/Contents/Resources:$PATH" ;;
+  esac
+fi
+# END codex-auto-dev</code></pre>
+    <h2>验证</h2>
+    <p>使用 <code>codex --version</code>、<code>codex-auto-dev doctor</code> 和 proposal 校验脚本确认配置与文档有效。</p>
+  </body>
+</html>

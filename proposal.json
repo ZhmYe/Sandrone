@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-29",
+  "updated_at": "2026-05-31",
   "proposals": [
     {
       "id": "initial-rust-cli",
@@ -28,6 +28,370 @@
         "tasks_md": "docs/proposals/2026-05-29/strict-planning-prompts/tasks.md",
         "plan_html": "docs/proposals/2026-05-29/strict-planning-prompts/plan.html",
         "change_doc_md": "docs/proposals/2026-05-29/strict-planning-prompts/change-doc.md"
+      }
+    },
+    {
+      "id": "explicit-approval-thread-registry-and-upgrade",
+      "date": "2026-05-29",
+      "title": "Explicit Approval, Thread Registry And Upgrade",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade/spec.md",
+        "plan_md": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade/plan.md",
+        "tasks_md": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade/tasks.md",
+        "plan_html": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-29/explicit-approval-thread-registry-and-upgrade/change-doc.md"
+      }
+    },
+    {
+      "id": "clone-codegraph-and-finish-delivery",
+      "date": "2026-05-29",
+      "title": "Clone CodeGraph And Finish Delivery",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery/spec.md",
+        "plan_md": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery/plan.md",
+        "tasks_md": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery/tasks.md",
+        "plan_html": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-29/clone-codegraph-and-finish-delivery/change-doc.md"
+      }
+    },
+    {
+      "id": "issue-body-planning-source",
+      "date": "2026-05-29",
+      "title": "Issue Body Planning Source",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-29/issue-body-planning-source",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-29/issue-body-planning-source/spec.md",
+        "plan_md": "docs/proposals/2026-05-29/issue-body-planning-source/plan.md",
+        "tasks_md": "docs/proposals/2026-05-29/issue-body-planning-source/tasks.md",
+        "plan_html": "docs/proposals/2026-05-29/issue-body-planning-source/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-29/issue-body-planning-source/change-doc.md"
+      }
+    },
+    {
+      "id": "strict-reviewer-gates",
+      "date": "2026-05-29",
+      "title": "Strict Reviewer Gates",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-29/strict-reviewer-gates",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-29/strict-reviewer-gates/spec.md",
+        "plan_md": "docs/proposals/2026-05-29/strict-reviewer-gates/plan.md",
+        "tasks_md": "docs/proposals/2026-05-29/strict-reviewer-gates/tasks.md",
+        "plan_html": "docs/proposals/2026-05-29/strict-reviewer-gates/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-29/strict-reviewer-gates/change-doc.md"
+      }
+    },
+    {
+      "id": "failure-path-error-assertions",
+      "date": "2026-05-30",
+      "title": "Failure Path Error Assertions",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/failure-path-error-assertions",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/failure-path-error-assertions/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/failure-path-error-assertions/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/failure-path-error-assertions/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/failure-path-error-assertions/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/failure-path-error-assertions/change-doc.md"
+      }
+    },
+    {
+      "id": "tick-issue-agent",
+      "date": "2026-05-30",
+      "title": "Tick Issue Agent",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/tick-issue-agent",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/tick-issue-agent/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/tick-issue-agent/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/tick-issue-agent/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/tick-issue-agent/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/tick-issue-agent/change-doc.md"
+      }
+    },
+    {
+      "id": "review-gate-unavailable-block",
+      "date": "2026-05-30",
+      "title": "Review Gate Unavailable Block",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/review-gate-unavailable-block",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/review-gate-unavailable-block/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/review-gate-unavailable-block/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/review-gate-unavailable-block/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/review-gate-unavailable-block/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/review-gate-unavailable-block/change-doc.md"
+      }
+    },
+    {
+      "id": "strict-reviewer-output-prompts",
+      "date": "2026-05-30",
+      "title": "Strict Reviewer Output Prompts",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/strict-reviewer-output-prompts",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/strict-reviewer-output-prompts/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/strict-reviewer-output-prompts/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/strict-reviewer-output-prompts/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/strict-reviewer-output-prompts/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/strict-reviewer-output-prompts/change-doc.md"
+      }
+    },
+    {
+      "id": "strict-issue-agent-prompt",
+      "date": "2026-05-30",
+      "title": "Strict Issue Agent Prompt",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/strict-issue-agent-prompt",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/strict-issue-agent-prompt/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/strict-issue-agent-prompt/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/strict-issue-agent-prompt/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/strict-issue-agent-prompt/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/strict-issue-agent-prompt/change-doc.md"
+      }
+    },
+    {
+      "id": "outer-tick-review-state-machine",
+      "date": "2026-05-30",
+      "title": "Outer Tick Review State Machine",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/outer-tick-review-state-machine",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/outer-tick-review-state-machine/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/outer-tick-review-state-machine/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/outer-tick-review-state-machine/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/outer-tick-review-state-machine/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/outer-tick-review-state-machine/change-doc.md"
+      }
+    },
+    {
+      "id": "agent-exit-advance-hook",
+      "date": "2026-05-30",
+      "title": "Agent Exit Advance Hook",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/agent-exit-advance-hook",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/agent-exit-advance-hook/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/agent-exit-advance-hook/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/agent-exit-advance-hook/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/agent-exit-advance-hook/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/agent-exit-advance-hook/change-doc.md"
+      }
+    },
+    {
+      "id": "observable-pipeline-doctor-next-phase",
+      "date": "2026-05-30",
+      "title": "Observable Pipeline Doctor And Next Phase Reviews",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/observable-pipeline-doctor-next-phase/change-doc.md"
+      }
+    },
+    {
+      "id": "upgrade-reference-examples",
+      "date": "2026-05-30",
+      "title": "Upgrade Reference Examples",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/upgrade-reference-examples",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/upgrade-reference-examples/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/upgrade-reference-examples/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/upgrade-reference-examples/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/upgrade-reference-examples/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/upgrade-reference-examples/change-doc.md"
+      }
+    },
+    {
+      "id": "upgrade-default-mode",
+      "date": "2026-05-30",
+      "title": "Upgrade Default Mode",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/upgrade-default-mode",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/upgrade-default-mode/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/upgrade-default-mode/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/upgrade-default-mode/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/upgrade-default-mode/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/upgrade-default-mode/change-doc.md"
+      }
+    },
+    {
+      "id": "codegraph-auto-init",
+      "date": "2026-05-30",
+      "title": "CodeGraph Auto Init",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/codegraph-auto-init",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/codegraph-auto-init/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/codegraph-auto-init/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/codegraph-auto-init/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/codegraph-auto-init/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/codegraph-auto-init/change-doc.md"
+      }
+    },
+    {
+      "id": "runtime-status-sync-and-detailed-review-findings",
+      "date": "2026-05-30",
+      "title": "Runtime Status Sync And Detailed Review Findings",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/runtime-status-sync-and-detailed-review-findings/change-doc.md"
+      }
+    },
+    {
+      "id": "agent-documentation-checklist-completion",
+      "date": "2026-05-30",
+      "title": "Agent Documentation Checklist Completion",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/agent-documentation-checklist-completion",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/agent-documentation-checklist-completion/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/agent-documentation-checklist-completion/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/agent-documentation-checklist-completion/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/agent-documentation-checklist-completion/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/agent-documentation-checklist-completion/change-doc.md"
+      }
+    },
+    {
+      "id": "tick-parallel-limit",
+      "date": "2026-05-30",
+      "title": "Tick Parallel Limit",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-30/tick-parallel-limit",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-30/tick-parallel-limit/spec.md",
+        "plan_md": "docs/proposals/2026-05-30/tick-parallel-limit/plan.md",
+        "tasks_md": "docs/proposals/2026-05-30/tick-parallel-limit/tasks.md",
+        "plan_html": "docs/proposals/2026-05-30/tick-parallel-limit/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-30/tick-parallel-limit/change-doc.md"
+      }
+    },
+    {
+      "id": "reviewer-isolation-and-runtime-list-sync",
+      "date": "2026-05-31",
+      "title": "Reviewer Isolation And Runtime List Sync",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/reviewer-isolation-and-runtime-list-sync/change-doc.md"
+      }
+    },
+    {
+      "id": "pr-create-capability-and-existing-detection",
+      "date": "2026-05-31",
+      "title": "PR Create Capability And Existing Detection",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/change-doc.md"
+      }
+    },
+    {
+      "id": "pr-body-review-findings",
+      "date": "2026-05-31",
+      "title": "PR Body Review Findings",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/pr-body-review-findings",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/pr-body-review-findings/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/pr-body-review-findings/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/pr-body-review-findings/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/pr-body-review-findings/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/pr-body-review-findings/change-doc.md"
+      }
+    },
+    {
+      "id": "resumable-blocked-requests-and-codex-bin-resolution",
+      "date": "2026-05-31",
+      "title": "Resumable Blocked Requests And Codex Bin Resolution",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/change-doc.md"
+      }
+    },
+    {
+      "id": "worktree-start-auto-pull",
+      "date": "2026-05-31",
+      "title": "Worktree Start Auto Pull",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/worktree-start-auto-pull",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/worktree-start-auto-pull/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/worktree-start-auto-pull/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/worktree-start-auto-pull/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/worktree-start-auto-pull/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/worktree-start-auto-pull/change-doc.md"
+      }
+    },
+    {
+      "id": "agent-baseline-failure-repair",
+      "date": "2026-05-31",
+      "title": "Agent Baseline Failure Repair",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/agent-baseline-failure-repair",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/agent-baseline-failure-repair/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/agent-baseline-failure-repair/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/agent-baseline-failure-repair/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/agent-baseline-failure-repair/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/agent-baseline-failure-repair/change-doc.md"
+      }
+    },
+    {
+      "id": "codex-cli-environment-docs",
+      "date": "2026-05-31",
+      "title": "Codex CLI Environment Docs",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/codex-cli-environment-docs",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/codex-cli-environment-docs/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/codex-cli-environment-docs/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/codex-cli-environment-docs/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/codex-cli-environment-docs/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/codex-cli-environment-docs/change-doc.md"
+      }
+    },
+    {
+      "id": "comprehensive-chinese-readme",
+      "date": "2026-05-31",
+      "title": "Comprehensive Chinese README",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/comprehensive-chinese-readme",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/comprehensive-chinese-readme/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/comprehensive-chinese-readme/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/comprehensive-chinese-readme/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/comprehensive-chinese-readme/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/comprehensive-chinese-readme/change-doc.md"
       }
     }
   ]

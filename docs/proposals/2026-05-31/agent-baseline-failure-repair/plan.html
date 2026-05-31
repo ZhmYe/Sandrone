@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Agent Baseline Failure Repair</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.6; color: #202124; }
+    main { max-width: 920px; margin: 0 auto; }
+    h1, h2 { line-height: 1.2; }
+    code { background: #f4f4f5; padding: 2px 4px; border-radius: 4px; }
+    .box { border: 1px solid #d7dce2; border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Agent Baseline Failure Repair</h1>
+    <section class="box">
+      <h2>目标</h2>
+      <p>测试发现已有失败时，agent 必须修复并复验，不能简单忽略。</p>
+    </section>
+    <section class="box">
+      <h2>证据</h2>
+      <p>change-doc 记录 Baseline failure 的失败命令、根因、修复范围和复验结果。</p>
+    </section>
+    <section class="box">
+      <h2>边界</h2>
+      <p>无法安全修复时 block，不绕过 approved plan 或 review gate。</p>
+    </section>
+  </main>
+</body>
+</html>

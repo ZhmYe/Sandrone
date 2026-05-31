@@ -40,6 +40,15 @@ fn run_with_env(workspace: &Path, args: &[&str], envs: &[(&str, &str)]) -> Outpu
     command.output().expect("codex-auto-dev command should run")
 }
 
+fn run_cad_alias(workspace: &Path, args: &[&str]) -> Output {
+    let alias = std::env::var_os("CARGO_BIN_EXE_cad").expect("cad alias should be built");
+    Command::new(alias)
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .expect("cad command should run")
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -215,8 +224,94 @@ fn help_lists_state_and_validation_commands() {
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("  list"));
+    assert!(stdout.contains("  dashboard"));
     assert!(stdout.contains("  status [REQ-0001]"));
     assert!(stdout.contains("  validate"));
+}
+
+#[test]
+fn cad_alias_prints_the_same_cli_help() {
+    let workspace = temp_workspace("cad-alias");
+    let output = run_cad_alias(&workspace, &["--help"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Usage: codex-auto-dev <command>"));
+    assert!(stdout.contains("dashboard"));
+}
+
+#[test]
+fn new_refuses_to_initialize_the_framework_source_checkout() {
+    let workspace = temp_workspace("self-guard");
+    fs::create_dir_all(workspace.join("src")).expect("src dir writable");
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = \"codex-auto-dev-workflow\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("Cargo.toml writable");
+    fs::write(workspace.join("src/main.rs"), "fn main() {}\n").expect("main.rs writable");
+    fs::create_dir_all(workspace.join("templates")).expect("templates dir writable");
+    fs::create_dir_all(workspace.join("skills/codex-auto-dev-workflow"))
+        .expect("skill dir writable");
+
+    let output = run(&workspace, &["new", "--name", "should-not-create-dev"]);
+
+    assert_failure_contains(
+        &output,
+        "refusing to initialize codex-auto-dev source checkout",
+    );
+    assert!(!workspace.join("dev").exists());
+    assert!(!workspace.join(".codex-auto-dev").exists());
+    assert!(!workspace.join("tools").exists());
+}
+
+#[test]
+fn templates_are_external_assets_not_embedded_in_main() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in [
+        "assets/dashboard/index.html",
+        "templates/prompts/issue-agent.md",
+        "templates/prompts/plan-agent.md",
+        "templates/prompts/implementation-agent.md",
+        "templates/prompts/plan-reviewer.md",
+        "templates/prompts/test-reviewer.md",
+        "templates/prompts/design-reviewer.md",
+        "templates/runtime/plan.md",
+        "templates/runtime/change-doc.md",
+        "templates/schemas/review-result.schema.json",
+        "templates/scripts/issue-update.sh",
+        "templates/scripts/issue-agent.sh",
+        "templates/scripts/review-tool.sh",
+        "templates/scripts/pr-create.sh",
+        "src/assets.rs",
+        "src/dashboard.rs",
+        "src/delivery.rs",
+        "src/defaults.rs",
+        "src/doctor.rs",
+        "src/registry.rs",
+        "src/review_gate.rs",
+        "src/state.rs",
+        "src/utils.rs",
+    ] {
+        assert!(root.join(path).is_file(), "missing template asset: {path}");
+    }
+
+    let main_source =
+        fs::read_to_string(root.join("src/main.rs")).expect("main.rs should be readable");
+    assert!(
+        main_source.lines().count() < 4500,
+        "main.rs should stay small enough to be navigable"
+    );
+    assert!(!main_source.contains("<!doctype html>"));
+    assert!(!main_source.contains("# PlanReviewer 严格审查提示词"));
+    assert!(!main_source.contains("# TestReviewer 严格审查提示词"));
+    assert!(!main_source.contains("# DesignReviewer 严格审查提示词"));
+    assert!(!main_source.contains("# Issue Agent 共享 agent 契约"));
+    assert!(!main_source.contains("fn default_review_tool_content"));
+    assert!(!main_source.contains("fn deliver_finished_request"));
+    assert!(!main_source.contains("fn doctor_command_check"));
+    assert!(!main_source.contains("fn load_requests"));
+    assert!(!main_source.contains("fn run_single_reviewer"));
+    assert!(!main_source.contains("fn json_objects_in_array"));
 }
 
 #[test]
@@ -276,6 +371,21 @@ fn skill_requires_install_or_verify_cli_before_workspace_commands() {
     assert!(SOURCE_SKILL.contains("无法由当前流程完成的事项不得保留为未勾选 checklist"));
     assert!(SOURCE_SKILL.contains("codex-auto-dev upgrade --dry-run"));
     assert!(SOURCE_SKILL.contains("codex-auto-dev upgrade --default"));
+    assert!(SOURCE_SKILL.contains("workspaces.json"));
+    assert!(SOURCE_SKILL.contains("codex-auto-dev dashboard"));
+    assert!(SOURCE_SKILL.contains("cad dashboard"));
+    assert!(SOURCE_SKILL.contains("Request -> Plan -> Plan Review"));
+    assert!(SOURCE_SKILL.contains("不要依赖会被覆盖的 `summary.json`"));
+    assert!(SOURCE_SKILL.contains("纵向列表"));
+    assert!(SOURCE_SKILL.contains("marked"));
+    assert!(SOURCE_SKILL.contains("jsoneditor"));
+    assert!(SOURCE_SKILL.contains("PlanReviewer 提交前自检"));
+    assert!(SOURCE_SKILL.contains("Code Review 提交前自检"));
+    assert!(SOURCE_SKILL.contains("src/registry.rs"));
+    assert!(SOURCE_SKILL.contains("src/state.rs"));
+    assert!(SOURCE_SKILL.contains("src/review_gate.rs"));
+    assert!(SOURCE_SKILL.contains("src/defaults.rs"));
+    assert!(SOURCE_SKILL.contains("templates/prompts/*.md"));
 }
 
 #[test]
@@ -376,14 +486,21 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(issue_agent.contains("shell_environment_policy.inherit"));
     let issue_agent_prompt = fs::read_to_string(workspace.join("tools/prompts/issue-agent.md"))
         .expect("issue agent prompt readable");
+    assert!(issue_agent_prompt.contains("共享 agent 契约"));
     assert!(issue_agent_prompt.contains("## 绝对边界"));
     assert!(issue_agent_prompt.contains("## Journal 格式"));
     assert!(issue_agent_prompt.contains("每条 reviewer critical/high 都必须有对应处理说明"));
+    assert!(issue_agent_prompt.contains("## Reviewer 提交前自检"));
+    assert!(issue_agent_prompt.contains("PlanReviewer 提交前自检"));
+    assert!(issue_agent_prompt.contains("TestReviewer"));
+    assert!(issue_agent_prompt.contains("DesignReviewer"));
     let plan_agent_prompt = fs::read_to_string(workspace.join("tools/prompts/plan-agent.md"))
         .expect("plan agent prompt readable");
     assert!(plan_agent_prompt.contains("## 启动前检查"));
     assert!(plan_agent_prompt.contains("## Plan 必须包含"));
-    assert!(plan_agent_prompt.contains("## 自检清单"));
+    assert!(plan_agent_prompt.contains("## PlanReviewer 提交前自检清单"));
+    assert!(plan_agent_prompt.contains("逐项核对 PlanReviewer"));
+    assert!(plan_agent_prompt.contains("不得退出交给 PlanReviewer"));
     assert!(plan_agent_prompt.contains("不运行 `submit`、`plan-review`"));
     let implementation_agent_prompt =
         fs::read_to_string(workspace.join("tools/prompts/implementation-agent.md"))
@@ -397,6 +514,10 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(
         implementation_agent_prompt.contains("无法由当前流程完成的事项不得保留为未勾选 checklist")
     );
+    assert!(implementation_agent_prompt.contains("## Code Review 提交前自检"));
+    assert!(implementation_agent_prompt.contains("逐项核对 TestReviewer"));
+    assert!(implementation_agent_prompt.contains("逐项核对 DesignReviewer"));
+    assert!(implementation_agent_prompt.contains("不得退出交给 code-review"));
     assert!(implementation_agent_prompt.contains("## Change Doc 必须包含"));
     assert!(implementation_agent_prompt.contains("不运行 `submit`、`code-review`"));
     let pr_tool =
@@ -493,6 +614,157 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
             .is_none(),
         "new must not create a change packet or fake plan"
     );
+}
+
+#[test]
+fn workspace_registry_tracks_new_upgrade_and_current_list_refresh() {
+    let registry_home = temp_workspace("registry-home");
+    let workspace = temp_workspace("registry-one");
+    let registry_home_str = registry_home
+        .to_str()
+        .expect("registry home path should be utf-8");
+    assert_success(&run_with_env(
+        &workspace,
+        &["new", "--name", "registry-project"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+
+    let registry_path = registry_home.join("workspaces.json");
+    let registry = fs::read_to_string(&registry_path).expect("workspace registry should exist");
+    assert!(registry.contains("\"schema_version\""));
+    assert!(registry.contains("\"repo_name\": \"registry-project\""));
+    assert!(registry.contains(&workspace.to_string_lossy().to_string()));
+    assert!(registry.contains("\"request_count\": 0"));
+
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tRegistry request\\tRegistry body\\thttps://example.test/registry\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    assert_success(&run_with_env(
+        &workspace,
+        &["update"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+    let list = run_with_env(
+        &workspace,
+        &["list"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    );
+    assert_success(&list);
+    let list_stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(list_stdout.contains("REQ-0001"));
+    assert!(list_stdout.contains("Registry request"));
+
+    let refreshed_registry =
+        fs::read_to_string(&registry_path).expect("workspace registry should be refreshed");
+    assert!(refreshed_registry.contains("\"request_count\": 1"));
+    assert!(refreshed_registry.contains("\"discovered\": 1"));
+
+    assert_success(&run_with_env(
+        &workspace,
+        &["upgrade"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+    let upgraded_registry =
+        fs::read_to_string(&registry_path).expect("workspace registry should survive upgrade");
+    assert!(upgraded_registry.contains("\"repo_name\": \"registry-project\""));
+    assert!(upgraded_registry.contains("\"last_status\": \"ready\""));
+}
+
+#[test]
+fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_attempts() {
+    let registry_home = temp_workspace("dashboard-registry-home");
+    let workspace_one = temp_workspace("dashboard-one");
+    let workspace_two = temp_workspace("dashboard-two");
+    let registry_home_str = registry_home
+        .to_str()
+        .expect("registry home path should be utf-8");
+
+    assert_success(&run_with_env(
+        &workspace_one,
+        &["new", "--name", "dashboard-one"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+    assert_success(&run_with_env(
+        &workspace_two,
+        &["new", "--name", "dashboard-two"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+
+    fs::write(
+        workspace_one.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tDashboard request\\tDashboard body\\thttps://example.test/dashboard\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    assert_success(&run_with_env(
+        &workspace_one,
+        &["update"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+    let change_name = format!("{}-dashboard-request", current_date());
+    assert_success(&run_with_env(
+        &workspace_one,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    ));
+
+    let change_path = workspace_one.join("docs/changes").join(&change_name);
+    let plan_review_details = change_path.join("reviews/plan-review/details");
+    let code_review_details = change_path.join("reviews/code-review/details");
+    fs::create_dir_all(&plan_review_details).expect("plan review details dir writable");
+    fs::create_dir_all(&code_review_details).expect("code review details dir writable");
+    fs::write(
+        plan_review_details.join("001-plan-reviewer.json"),
+        "{\"reviewer\":\"PlanReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"planning\",\"summary\":\"round one asks for more detail\",\"process\":[\"read request\",\"read plan\"],\"critical\":[],\"high\":[{\"title\":\"缺少测试计划\",\"evidence\":\"plan.md 没有失败路径测试\",\"impact\":\"实现可能没有回归保护\",\"required_fix\":\"补充测试计划\",\"suggested_change\":\"在 plan.md 的测试章节列出失败路径和回归路径。\",\"verification\":\"重新运行 plan-review。\"}],\"warning\":[],\"info\":[]}\n",
+    )
+    .expect("plan review detail writable");
+    fs::write(
+        plan_review_details.join("002-plan-reviewer.json"),
+        "{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"round two approved\",\"process\":[\"read updated plan\"],\"critical\":[],\"high\":[],\"warning\":[{\"title\":\"保留人工关注点\",\"evidence\":\"plan.md 仍有一个后续优化\",\"impact\":\"不阻塞实现，但人类评审应关注\",\"required_fix\":\"无需阻塞修复\",\"suggested_change\":\"在 change-doc.md 记录该后续优化是否完成。\",\"verification\":\"code-review 时检查 change-doc。\"}],\"info\":[]}\n",
+    )
+    .expect("plan review second detail writable");
+    fs::write(
+        code_review_details.join("001-test-reviewer.json"),
+        "{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests ok\",\"process\":[\"read tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}\n",
+    )
+    .expect("test review detail writable");
+    fs::write(
+        code_review_details.join("001-design-reviewer.json"),
+        "{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"read design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}\n",
+    )
+    .expect("design review detail writable");
+
+    let dashboard_root = temp_workspace("dashboard-root");
+    let output = run_with_env(
+        &dashboard_root,
+        &["dashboard", "--json"],
+        &[("CODEX_AUTO_DEV_HOME", registry_home_str)],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"projects\""));
+    assert!(stdout.contains("\"repo_name\": \"dashboard-one\""));
+    assert!(stdout.contains("\"repo_name\": \"dashboard-two\""));
+    assert!(stdout.contains("\"stage_id\": \"request\""));
+    assert!(stdout.contains("\"stage_id\": \"plan\""));
+    assert!(stdout.contains("\"stage_id\": \"plan-review\""));
+    assert!(stdout.contains("\"stage_id\": \"implementation\""));
+    assert!(stdout.contains("\"stage_id\": \"code-review\""));
+    assert!(stdout.contains("\"stage_id\": \"finish-pr\""));
+    assert!(stdout.contains("\"artifact_path\": \"docs/changes"));
+    assert!(stdout.contains("plan.md"));
+    assert!(stdout.contains("change-doc.md"));
+    assert!(stdout.contains("\"review_attempts\""));
+    assert!(stdout.contains("\"attempt\": 1"));
+    assert!(stdout.contains("\"attempt\": 2"));
+    assert!(stdout.contains("001-plan-reviewer.json"));
+    assert!(stdout.contains("002-plan-reviewer.json"));
+    assert!(stdout.contains("TestReviewer"));
+    assert!(stdout.contains("DesignReviewer"));
+    assert!(stdout.contains("round two approved"));
+    assert!(stdout.contains("保留人工关注点"));
+    assert!(stdout.contains("\"artifact_kind\": \"review-details\""));
 }
 
 #[test]

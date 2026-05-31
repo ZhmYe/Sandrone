@@ -393,6 +393,118 @@
         "plan_html": "docs/proposals/2026-05-31/comprehensive-chinese-readme/plan.html",
         "change_doc_md": "docs/proposals/2026-05-31/comprehensive-chinese-readme/change-doc.md"
       }
+    },
+    {
+      "id": "workspace-registry-dashboard",
+      "date": "2026-05-31",
+      "title": "Workspace Registry Dashboard",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/workspace-registry-dashboard",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/workspace-registry-dashboard/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/workspace-registry-dashboard/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/workspace-registry-dashboard/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/workspace-registry-dashboard/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/workspace-registry-dashboard/change-doc.md"
+      }
+    },
+    {
+      "id": "agent-review-preflight-self-check",
+      "date": "2026-05-31",
+      "title": "Agent Review Preflight Self Check",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/agent-review-preflight-self-check",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/agent-review-preflight-self-check/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/agent-review-preflight-self-check/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/agent-review-preflight-self-check/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/agent-review-preflight-self-check/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/agent-review-preflight-self-check/change-doc.md"
+      }
+    },
+    {
+      "id": "source-template-module-refactor",
+      "date": "2026-05-31",
+      "title": "Source Template Module Refactor",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/source-template-module-refactor",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/source-template-module-refactor/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/source-template-module-refactor/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/source-template-module-refactor/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/source-template-module-refactor/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/source-template-module-refactor/change-doc.md"
+      }
+    },
+    {
+      "id": "self-workspace-guard",
+      "date": "2026-05-31",
+      "title": "Self Workspace Guard",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/self-workspace-guard",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/self-workspace-guard/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/self-workspace-guard/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/self-workspace-guard/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/self-workspace-guard/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/self-workspace-guard/change-doc.md"
+      }
+    },
+    {
+      "id": "assets-template-boundary",
+      "date": "2026-05-31",
+      "title": "Assets Template Boundary",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/assets-template-boundary",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/assets-template-boundary/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/assets-template-boundary/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/assets-template-boundary/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/assets-template-boundary/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/assets-template-boundary/change-doc.md"
+      }
+    },
+    {
+      "id": "main-module-decomposition",
+      "date": "2026-05-31",
+      "title": "Main Module Decomposition",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/main-module-decomposition",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/main-module-decomposition/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/main-module-decomposition/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/main-module-decomposition/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/main-module-decomposition/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/main-module-decomposition/change-doc.md"
+      }
+    },
+    {
+      "id": "dashboard-height-compatibility",
+      "date": "2026-05-31",
+      "title": "Dashboard Height Compatibility",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/dashboard-height-compatibility",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/dashboard-height-compatibility/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/dashboard-height-compatibility/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/dashboard-height-compatibility/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/dashboard-height-compatibility/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/dashboard-height-compatibility/change-doc.md"
+      }
+    },
+    {
+      "id": "readme-dashboard-command-docs",
+      "date": "2026-05-31",
+      "title": "README Dashboard Command Docs",
+      "status": "implemented",
+      "path": "docs/proposals/2026-05-31/readme-dashboard-command-docs",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/spec.md",
+        "plan_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/plan.md",
+        "tasks_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/tasks.md",
+        "plan_html": "docs/proposals/2026-05-31/readme-dashboard-command-docs/plan.html",
+        "change_doc_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/change-doc.md"
+      }
     }
   ]
 }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Source Template Module Refactor</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; color: #182033; background: #f6f8fb; line-height: 1.65; }
+    main { max-width: 900px; margin: 0 auto; background: #fff; border: 1px solid #dce3ef; border-radius: 8px; padding: 28px; }
+    code { background: #eef2f7; border-radius: 4px; padding: 2px 5px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Source Template Module Refactor</h1>
+    <p>把固定静态页面移到 <code>assets/</code>，把可替换模板移到 <code>templates/</code>，用 <code>src/assets.rs</code> 编译期引用，并拆出 dashboard 与 registry 模块。</p>
+    <ol>
+      <li>结构测试先行。</li>
+      <li>迁移 HTML、Markdown、prompt、script 和 schema。</li>
+      <li>拆分 <code>dashboard.rs</code> 与 <code>registry.rs</code>。</li>
+      <li>运行全量验证。</li>
+    </ol>
+  </main>
+</body>
+</html>

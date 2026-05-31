@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "required": [
+    "reviewer",
+    "approved",
+    "gate_unavailable",
+    "decision",
+    "recommended_next_phase",
+    "summary",
+    "process",
+    "critical",
+    "high",
+    "warning",
+    "info"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reviewer": { "type": "string" },
+    "approved": { "type": "boolean" },
+    "gate_unavailable": { "type": "boolean" },
+    "decision": { "type": "string", "enum": ["approved", "rejected"] },
+    "recommended_next_phase": { "type": "string", "enum": ["planning", "implementation", "blocked"] },
+    "summary": { "type": "string" },
+    "process": { "type": "array", "items": { "type": "string" } },
+    "critical": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "high": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "warning": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "info": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["title", "evidence", "impact", "required_fix", "suggested_change", "verification"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "evidence": { "type": "string" },
+        "impact": { "type": "string" },
+        "required_fix": { "type": "string" },
+        "suggested_change": { "type": "string" },
+        "verification": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Auto Dev Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.4.1/jsoneditor.min.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f6;
+      --surface: #f8fafc;
+      --surface-strong: #ffffff;
+      --line: #d8e0ea;
+      --line-strong: #b8c4d3;
+      --text: #1b2737;
+      --muted: #65758a;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --red: #b91c1c;
+      --red-soft: #fee2e2;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --shadow: 0 16px 40px rgba(29, 42, 61, 0.12);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      overflow: auto;
+    }
+    button {
+      font: inherit;
+      color: inherit;
+      border: 0;
+      cursor: pointer;
+    }
+    .shell {
+      min-height: 100dvh;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+    }
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: 100dvh;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    .brand small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .refresh {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      transition: transform 160ms ease, border-color 160ms ease;
+    }
+    .refresh:hover { transform: rotate(18deg); border-color: var(--blue); }
+    .project-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: calc(100dvh - 116px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .project {
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 5px 18px rgba(29, 42, 61, 0.05);
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+    .project:hover,
+    .project.active {
+      border-color: var(--blue);
+      box-shadow: var(--shadow);
+    }
+    .project-name {
+      font-size: 14px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .project-path {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .tags {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tag {
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #e5eaf1;
+      color: #405169;
+    }
+    .tag.blocked { color: var(--red); background: var(--red-soft); }
+    .tag.pending { color: var(--blue); background: var(--blue-soft); }
+    .tag.finish { color: var(--green); background: var(--green-soft); }
+    .main {
+      min-width: 0;
+      min-height: 0;
+      padding: 24px;
+      display: grid;
+      grid-template-rows: auto auto auto;
+      gap: 16px;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+    }
+    .title h2 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+    .title p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      word-break: break-all;
+    }
+    .stats {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .stat {
+      min-width: 92px;
+      border-radius: 8px;
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+    }
+    .stat strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 5px;
+    }
+    .request-strip {
+      min-height: 0;
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      overflow: hidden;
+    }
+    .request-list {
+      max-height: clamp(278px, 34dvh, 360px);
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 2px;
+      scrollbar-gutter: stable;
+    }
+    .request {
+      text-align: left;
+      min-width: 0;
+      min-height: 82px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      padding: 11px 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+    .request:hover,
+    .request.active {
+      border-color: var(--blue);
+      background: #f4f8ff;
+    }
+    .request-head {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: start;
+    }
+    .request-id {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .request-title {
+      font-size: 14px;
+      font-weight: 750;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .request-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      margin-top: 3px;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .status-pill {
+      border-radius: 999px;
+      padding: 4px 8px;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 800;
+      background: #e5eaf1;
+      color: #405169;
+      align-self: center;
+    }
+    .status-pill.blocked { background: var(--red-soft); color: var(--red); }
+    .status-pill.done { background: var(--green-soft); color: var(--green); }
+    .status-pill.running { background: var(--blue-soft); color: var(--blue); }
+    .detail {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto;
+      gap: 14px;
+    }
+    .timeline {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px 16px 12px;
+      overflow-x: auto;
+    }
+    .stage-row {
+      min-width: 760px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(96px, 1fr));
+      position: relative;
+    }
+    .stage-row::before {
+      content: "";
+      position: absolute;
+      top: 18px;
+      left: 8%;
+      right: 8%;
+      height: 2px;
+      background: var(--line);
+      z-index: 0;
+    }
+    .stage {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+    }
+    .dot {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      border: 3px solid var(--line-strong);
+      background: var(--surface-strong);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+    .stage.done .dot { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+    .stage.active .dot { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.10); }
+    .stage.selected .dot { transform: scale(1.08); }
+    .stage-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+      min-height: 32px;
+      line-height: 1.25;
+      max-width: 120px;
+    }
+    .stage.selected .stage-label { color: var(--text); font-weight: 800; }
+    .artifact {
+      min-height: 0;
+      max-height: 820px;
+      align-self: start;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .artifact-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .artifact-head h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+    .artifact-path {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .artifact-body {
+      min-height: 0;
+      max-height: 720px;
+      overflow: auto;
+      padding: 16px;
+      background: #fbfdff;
+      scrollbar-gutter: stable;
+    }
+    .markdown {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      line-height: 1.58;
+      font-size: 13px;
+    }
+    .markdown-rendered {
+      line-height: 1.65;
+      font-size: 14px;
+      color: var(--text);
+      max-width: 980px;
+    }
+    .markdown-rendered h1,
+    .markdown-rendered h2,
+    .markdown-rendered h3 {
+      line-height: 1.25;
+      margin: 1.15em 0 0.55em;
+      letter-spacing: 0;
+    }
+    .markdown-rendered h1 { font-size: 24px; }
+    .markdown-rendered h2 { font-size: 19px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+    .markdown-rendered h3 { font-size: 16px; }
+    .markdown-rendered p,
+    .markdown-rendered ul,
+    .markdown-rendered ol {
+      margin: 0.7em 0;
+    }
+    .markdown-rendered code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #eef2f6;
+      border: 1px solid #e2e8f0;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+    .markdown-rendered pre {
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      overflow: auto;
+    }
+    .markdown-rendered pre code {
+      background: transparent;
+      border: 0;
+      padding: 0;
+    }
+    .markdown-rendered table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+      font-size: 13px;
+    }
+    .markdown-rendered th,
+    .markdown-rendered td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .markdown-rendered blockquote {
+      border-left: 4px solid var(--blue);
+      margin: 1em 0;
+      padding: 2px 0 2px 12px;
+      color: var(--muted);
+      background: #f4f8ff;
+    }
+    .json-viewer {
+      min-height: min(320px, 52dvh);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: white;
+    }
+    .json-viewer .jsoneditor {
+      border: 0;
+    }
+    .json-section {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .empty {
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: 8px;
+      padding: 18px;
+      background: #f8fafc;
+    }
+    .review-layout {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 14px;
+    }
+    .attempts,
+    .reviewers {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .attempt {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      padding: 10px;
+      text-align: left;
+    }
+    .attempt.active { border-color: var(--blue); background: var(--blue-soft); }
+    .reviewer {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      padding: 12px;
+      text-align: left;
+    }
+    .reviewer.active { border-color: var(--blue); box-shadow: 0 8px 24px rgba(37, 99, 235, 0.10); }
+    .finding-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .finding {
+      border-left: 4px solid var(--line-strong);
+      background: #f8fafc;
+      padding: 10px 12px;
+      border-radius: 0 8px 8px 0;
+    }
+    .finding.critical,
+    .finding.high { border-left-color: var(--red); background: var(--red-soft); }
+    .finding.warning { border-left-color: var(--amber); background: var(--amber-soft); }
+    .finding.info { border-left-color: var(--blue); background: var(--blue-soft); }
+    .finding h4 { margin: 0 0 8px; font-size: 14px; }
+    .finding p { margin: 4px 0; color: var(--text); font-size: 13px; line-height: 1.45; }
+    @media (max-width: 920px) {
+      .shell {
+        min-height: 100dvh;
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        min-height: auto;
+        max-height: none;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .project-list { max-height: 260px; }
+      .main {
+        min-height: auto;
+        padding: 16px;
+      }
+      .topbar { grid-template-columns: 1fr; }
+      .stats { justify-content: flex-start; }
+      .request-list { max-height: 320px; }
+      .artifact {
+        min-height: 420px;
+        max-height: none;
+      }
+      .artifact-body {
+        min-height: 320px;
+        max-height: min(68dvh, 680px);
+      }
+      .review-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div>
+          <h1>Codex Auto Dev</h1>
+          <small id="registry-path">loading</small>
+        </div>
+        <button class="refresh" id="refresh" title="刷新">↻</button>
+      </div>
+      <div class="project-list" id="projects"></div>
+    </aside>
+    <main class="main">
+      <section class="topbar">
+        <div class="title">
+          <h2 id="project-title">加载中</h2>
+          <p id="project-subtitle"></p>
+        </div>
+        <div class="stats" id="stats"></div>
+      </section>
+      <section class="request-strip">
+        <div class="request-list" id="requests"></div>
+      </section>
+      <section class="detail">
+        <div class="timeline"><div class="stage-row" id="timeline"></div></div>
+        <div class="artifact">
+          <div class="artifact-head">
+            <div>
+              <h3 id="artifact-title">Stage</h3>
+              <div class="artifact-path" id="artifact-path"></div>
+            </div>
+            <span class="status-pill" id="artifact-state">pending</span>
+          </div>
+          <div class="artifact-body" id="artifact-body"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/lib/common.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.4.1/jsoneditor.min.js"></script>
+  <script>
+    const state = { data: null, project: 0, request: 0, stage: 0, attempt: 0, reviewer: 0 };
+    const els = {
+      projects: document.querySelector("#projects"),
+      requests: document.querySelector("#requests"),
+      timeline: document.querySelector("#timeline"),
+      stats: document.querySelector("#stats"),
+      projectTitle: document.querySelector("#project-title"),
+      projectSubtitle: document.querySelector("#project-subtitle"),
+      registryPath: document.querySelector("#registry-path"),
+      artifactTitle: document.querySelector("#artifact-title"),
+      artifactPath: document.querySelector("#artifact-path"),
+      artifactState: document.querySelector("#artifact-state"),
+      artifactBody: document.querySelector("#artifact-body"),
+      refresh: document.querySelector("#refresh")
+    };
+
+    els.refresh.addEventListener("click", load);
+    load();
+    setInterval(load, 15000);
+
+    async function load() {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      state.data = await response.json();
+      state.project = clamp(state.project, state.data.projects.length);
+      const project = currentProject();
+      state.request = clamp(state.request, project ? project.requests.length : 0);
+      render();
+    }
+
+    function clamp(index, length) {
+      if (length <= 0) return 0;
+      return Math.min(index, length - 1);
+    }
+
+    function currentProject() {
+      return state.data && state.data.projects[state.project];
+    }
+
+    function currentRequest() {
+      const project = currentProject();
+      return project && project.requests[state.request];
+    }
+
+    function currentStage() {
+      const request = currentRequest();
+      return request && request.stages[state.stage];
+    }
+
+    function render() {
+      els.registryPath.textContent = state.data.registry_path;
+      renderProjects();
+      renderProjectSummary();
+      renderRequests();
+      renderTimeline();
+      renderArtifact();
+    }
+
+    function renderProjects() {
+      els.projects.innerHTML = "";
+      if (!state.data.projects.length) {
+        els.projects.innerHTML = `<div class="empty">还没有 registry 记录。先运行 cad new。</div>`;
+        return;
+      }
+      state.data.projects.forEach((project, index) => {
+        const counts = project.status_counts || {};
+        const blockedCount = counts.blocked || 0;
+        const finishCount = finishStatusCount(counts);
+        const pendingCount = Math.max(0, (project.request_count || 0) - blockedCount - finishCount);
+        const button = document.createElement("button");
+        button.className = `project ${index === state.project ? "active" : ""}`;
+        button.innerHTML = `
+          <div class="project-name">${escapeHtml(project.repo_name)}</div>
+          <div class="project-path">${escapeHtml(project.workspace_path)}</div>
+          <div class="tags">
+            ${tag("blocked", "blocked", blockedCount)}
+            ${tag("pending", "pending", pendingCount)}
+            ${tag("finish", "finish", finishCount)}
+          </div>
+        `;
+        button.addEventListener("click", () => {
+          state.project = index;
+          state.request = 0;
+          state.stage = 0;
+          state.attempt = 0;
+          state.reviewer = 0;
+          render();
+        });
+        els.projects.appendChild(button);
+      });
+    }
+
+    function tag(kind, label, count) {
+      return `<span class="tag ${kind}">${label}: ${count}</span>`;
+    }
+
+    function finishStatusCount(counts) {
+      return ["finished"]
+        .reduce((total, status) => total + (counts[status] || 0), 0);
+    }
+
+    function renderProjectSummary() {
+      const project = currentProject();
+      if (!project) {
+        els.projectTitle.textContent = "没有项目";
+        els.projectSubtitle.textContent = "";
+        els.stats.innerHTML = "";
+        return;
+      }
+      els.projectTitle.textContent = project.repo_name;
+      els.projectSubtitle.textContent = project.git_url || project.workspace_path;
+      const counts = project.status_counts || {};
+      els.stats.innerHTML = [
+        stat("需求", project.request_count),
+        stat("阻塞", counts.blocked || 0),
+        stat("进行中", (counts["planning-agent-running"] || 0) + (counts["implementation-agent-running"] || 0)),
+        stat("待交付", (counts["waiting-finish"] || 0) + (counts["change-doc-approved"] || 0))
+      ].join("");
+    }
+
+    function stat(label, value) {
+      return `<div class="stat"><strong>${value}</strong><span>${label}</span></div>`;
+    }
+
+    function renderRequests() {
+      const project = currentProject();
+      els.requests.innerHTML = "";
+      if (!project || !project.requests.length) {
+        els.requests.innerHTML = `<div class="empty">当前项目还没有 request。</div>`;
+        return;
+      }
+      project.requests.forEach((request, index) => {
+        const button = document.createElement("button");
+        button.className = `request ${index === state.request ? "active" : ""}`;
+        button.innerHTML = `
+          <div class="request-head">
+            <span class="request-id">${escapeHtml(request.request_id)}</span>
+            <div>
+              <div class="request-title">${escapeHtml(request.title || request.external_id)}</div>
+              <div class="request-meta">${escapeHtml(request.source || "manual")} · ${escapeHtml(request.external_id)}</div>
+            </div>
+          </div>
+          <span class="status-pill ${statusClass(request.status)}">${escapeHtml(request.status)}</span>
+        `;
+        button.addEventListener("click", () => {
+          state.request = index;
+          state.stage = 0;
+          state.attempt = 0;
+          state.reviewer = 0;
+          render();
+        });
+        els.requests.appendChild(button);
+      });
+    }
+
+    function renderTimeline() {
+      const request = currentRequest();
+      els.timeline.innerHTML = "";
+      if (!request) return;
+      state.stage = clamp(state.stage, request.stages.length);
+      request.stages.forEach((stage, index) => {
+        const button = document.createElement("button");
+        button.className = `stage ${stage.state} ${index === state.stage ? "selected" : ""}`;
+        button.innerHTML = `<span class="dot">${index + 1}</span><span class="stage-label">${escapeHtml(stage.label)}</span>`;
+        button.addEventListener("click", () => {
+          state.stage = index;
+          state.attempt = 0;
+          state.reviewer = 0;
+          renderTimeline();
+          renderArtifact();
+        });
+        els.timeline.appendChild(button);
+      });
+    }
+
+    function renderArtifact() {
+      const stage = currentStage();
+      if (!stage) {
+        els.artifactTitle.textContent = "没有 stage";
+        els.artifactPath.textContent = "";
+        els.artifactBody.innerHTML = `<div class="empty">选择一个项目和 request。</div>`;
+        return;
+      }
+      els.artifactTitle.textContent = stage.title;
+      els.artifactPath.textContent = stage.artifact_path || "尚无文件";
+      els.artifactState.textContent = stage.state;
+      els.artifactState.className = `status-pill ${stage.state === "done" ? "done" : stage.state}`;
+      if (stage.artifact_kind === "review-details") {
+        renderReviewStage(stage);
+      } else if (stage.artifact_kind === "json" && stage.content) {
+        els.artifactBody.innerHTML = `<div class="json-viewer" data-json-stage></div>`;
+        mountJsonViewer(els.artifactBody.querySelector("[data-json-stage]"), stage.content);
+      } else if (stage.content) {
+        els.artifactBody.replaceChildren(renderMarkdownContent(stage.content));
+      } else {
+        els.artifactBody.innerHTML = `<div class="empty">这个阶段还没有生成核心文件。</div>`;
+      }
+    }
+
+    function renderReviewStage(stage) {
+      if (!stage.review_attempts.length) {
+        els.artifactBody.innerHTML = `<div class="empty">这个 review stage 还没有 detail JSON。</div>`;
+        return;
+      }
+      state.attempt = clamp(state.attempt, stage.review_attempts.length);
+      const attempt = stage.review_attempts[state.attempt];
+      state.reviewer = clamp(state.reviewer, attempt.reviewers.length);
+      const reviewer = attempt.reviewers[state.reviewer];
+      els.artifactBody.innerHTML = `
+        <div class="review-layout">
+          <div class="attempts">
+            ${stage.review_attempts.map((item, index) => `
+              <button class="attempt ${index === state.attempt ? "active" : ""}" data-attempt="${index}">
+                <strong>Round ${item.attempt}</strong><br>
+                <span class="status-pill ${item.status === "approved" ? "done" : "blocked"}">${item.status}</span>
+              </button>
+            `).join("")}
+          </div>
+          <div>
+            <div class="reviewers">
+              ${attempt.reviewers.map((item, index) => `
+                <button class="reviewer ${index === state.reviewer ? "active" : ""}" data-reviewer="${index}">
+                  <strong>${escapeHtml(item.reviewer)}</strong>
+                  <span class="status-pill ${item.approved ? "done" : "blocked"}">${escapeHtml(item.decision)}</span>
+                  <div class="project-path">${escapeHtml(item.detail_path)}</div>
+                </button>
+              `).join("")}
+            </div>
+            ${reviewer ? renderReviewerDetail(reviewer) : `<div class="empty">本轮没有 reviewer 结果。</div>`}
+          </div>
+        </div>
+      `;
+      els.artifactBody.querySelectorAll("[data-attempt]").forEach(button => {
+        button.addEventListener("click", () => {
+          state.attempt = Number(button.dataset.attempt);
+          state.reviewer = 0;
+          renderArtifact();
+        });
+      });
+      els.artifactBody.querySelectorAll("[data-reviewer]").forEach(button => {
+        button.addEventListener("click", () => {
+          state.reviewer = Number(button.dataset.reviewer);
+          renderArtifact();
+        });
+      });
+      const jsonTarget = els.artifactBody.querySelector("[data-json-detail]");
+      if (jsonTarget && reviewer) {
+        mountJsonViewer(jsonTarget, reviewer.detail);
+      }
+    }
+
+    function renderReviewerDetail(reviewer) {
+      const findings = ["critical", "high", "warning", "info"]
+        .flatMap(kind => (reviewer[kind] || []).map(item => ({ kind, item })));
+      return `
+        <div class="finding-grid">
+          <div class="finding ${reviewer.approved ? "info" : "high"}">
+            <h4>${escapeHtml(reviewer.reviewer)} · ${escapeHtml(reviewer.decision)}</h4>
+            <p><strong>Next:</strong> ${escapeHtml(reviewer.recommended_next_phase)}</p>
+            <p><strong>Summary:</strong> ${escapeHtml(reviewer.summary || "无")}</p>
+          </div>
+          ${findings.length ? findings.map(({ kind, item }) => `
+            <div class="finding ${kind}">
+              <h4>${escapeHtml(kind)} · ${escapeHtml(item.title)}</h4>
+              <p><strong>Evidence:</strong> ${escapeHtml(item.evidence)}</p>
+              <p><strong>Impact:</strong> ${escapeHtml(item.impact)}</p>
+              <p><strong>Required fix:</strong> ${escapeHtml(item.required_fix)}</p>
+              <p><strong>Suggested change:</strong> ${escapeHtml(item.suggested_change)}</p>
+              <p><strong>Verification:</strong> ${escapeHtml(item.verification)}</p>
+            </div>
+          `).join("") : `<div class="finding info"><h4>Findings</h4><p>无。</p></div>`}
+          <div class="json-section">
+            <div class="artifact-path">原始 reviewer JSON</div>
+            <div class="json-viewer" data-json-detail></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMarkdownContent(content) {
+      const container = document.createElement("div");
+      if (window.marked && window.DOMPurify) {
+        try {
+          marked.setOptions({ gfm: true, breaks: false });
+          container.className = "markdown-rendered";
+          container.innerHTML = DOMPurify.sanitize(marked.parse(content || ""));
+          if (window.hljs) {
+            container.querySelectorAll("pre code").forEach(block => hljs.highlightElement(block));
+          }
+          return container;
+        } catch (error) {
+          console.warn("markdown renderer failed, falling back to plain text", error);
+        }
+      }
+      container.className = "markdown raw-fallback";
+      container.textContent = content || "";
+      return container;
+    }
+
+    function mountJsonViewer(target, jsonText) {
+      if (!target) return;
+      target.innerHTML = "";
+      let value;
+      try {
+        value = JSON.parse(jsonText || "null");
+      } catch (error) {
+        target.appendChild(renderPlainJsonFallback(jsonText || ""));
+        return;
+      }
+      if (window.JSONEditor) {
+        try {
+          const editor = new JSONEditor(target, {
+            mode: "view",
+            mainMenuBar: false,
+            navigationBar: false,
+            statusBar: false,
+            search: true
+          });
+          editor.set(value);
+          return;
+        } catch (error) {
+          console.warn("json viewer failed, falling back to plain text", error);
+        }
+      }
+      target.appendChild(renderPlainJsonFallback(JSON.stringify(value, null, 2)));
+    }
+
+    function renderPlainJsonFallback(value) {
+      const pre = document.createElement("pre");
+      pre.className = "markdown raw-fallback";
+      pre.textContent = value;
+      return pre;
+    }
+
+    function statusClass(status) {
+      if (status === "blocked") return "blocked";
+      if (status === "finished" || status === "waiting-finish" || status === "change-doc-approved") return "done";
+      if (status.includes("running") || status === "in-progress") return "running";
+      return "";
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>

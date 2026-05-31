@@ -7,3 +7,7 @@ description = "CLI-first workflow for turning work items into plans, isolated wo
 [[bin]]
 name = "codex-auto-dev"
 path = "src/main.rs"
+
+[[bin]]
+name = "cad"
+path = "src/bin/cad.rs"

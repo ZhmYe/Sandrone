@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Agent Review Preflight Self Check</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.65; color: #172033; background: #f7f8fb; }
+    main { max-width: 880px; margin: 0 auto; background: #fff; border: 1px solid #d8deea; border-radius: 8px; padding: 28px; }
+    h1, h2 { line-height: 1.25; }
+    li { margin: 8px 0; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Agent Review Preflight Self Check</h1>
+    <p>让 agent 在提交给 reviewer 前先按对应 reviewer 标准自检，减少必然失败的 review 调用。</p>
+    <h2>流程</h2>
+    <ol>
+      <li>测试锁定默认 prompt 必须包含自检要求。</li>
+      <li><code>issue-agent.md</code> 说明共享契约职责。</li>
+      <li><code>plan-agent.md</code> 增加 PlanReviewer preflight。</li>
+      <li><code>implementation-agent.md</code> 增加 TestReviewer 和 DesignReviewer preflight。</li>
+      <li>README 与 Skill 同步说明。</li>
+    </ol>
+  </main>
+</body>
+</html>

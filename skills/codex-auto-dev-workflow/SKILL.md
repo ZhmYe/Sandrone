@@ -1,13 +1,13 @@
 ---
 name: codex-auto-dev-workflow
-description: Use when the user asks Codex to create, clone, update, tick, plan, implement, review, block, resume, finish, upgrade, approve, or manage software work with codex-auto-dev workspaces, especially when explicit approval gates, request IDs, Chinese change templates, isolated worktrees, issue-agent automation, recovery docs, target project checks, no-commit/no-push agent boundaries, or finish-time PR delivery matter.
+description: Use when the user asks Codex to create, clone, update, tick, plan, implement, review, block, resume, finish, upgrade, approve, dashboard, or manage software work with codex-auto-dev workspaces, especially when explicit approval gates, request IDs, Chinese change templates, isolated worktrees, issue-agent automation, global workspace registry, recovery docs, target project checks, no-commit/no-push agent boundaries, or finish-time PR delivery matter.
 metadata:
   short-description: Run codex-auto-dev approval-gated workspaces
 ---
 
 # Codex Auto Dev Workflow
 
-当用户要求 Codex 新建仓库、clone 仓库、同步需求、自动处理 issue、写计划、实现需求、审批、阻塞恢复、升级旧 workspace 或完成变更时，使用这个 skill。
+当用户要求 Codex 新建仓库、clone 仓库、同步需求、自动处理 issue、写计划、实现需求、审批、阻塞恢复、查看 dashboard、升级旧 workspace 或完成变更时，使用这个 skill。
 
 ## 必做第一步: 安装或验证 CLI
 
@@ -33,7 +33,7 @@ Do not run workspace commands until `codex-auto-dev --help` succeeds.
 
 ## 核心边界
 
-`codex-auto-dev` 只做机械动作: 创建 workspace、clone 目标仓库、request 记录、简洁 change 文档包、approval 文件、review 结果、session registry、worktree、blocked/recovery 和 finish-time commit/push/PR。
+`codex-auto-dev` 只做机械动作: 创建 workspace、clone 目标仓库、request 记录、全局 workspace registry、简洁 change 文档包、approval 文件、review 结果、session registry、worktree、blocked/recovery、dashboard 数据和 finish-time commit/push/PR。
 
 Codex CLI 子运行负责思考和交付: 填写 `plan.md`、实现代码、运行目标项目检查、写 `change-doc.md`、根据 reviewer 结果修复、记录 `agent-journal.md`。
 
@@ -90,6 +90,34 @@ codex-auto-dev doctor
 
 所有关键状态变化都会追加到 `.codex-auto-dev/state/events.ndjson`。该文件是审计、前端展示和恢复分析的稳定事件流；不要让 agent 手动改写它。
 
+全局 workspace registry 默认写入 `~/.codex-auto-dev/workspaces.json`，可用 `CODEX_AUTO_DEV_HOME` 覆盖目录。`new`、`upgrade`、`list` 和 `dashboard` 会刷新 registry。`codex-auto-dev list` 在当前 workspace 内只列出当前项目的 request；`codex-auto-dev dashboard` 会读取 registry，展示本机所有已登记 workspace。
+
+不要在 `codex-auto-dev-workflow` 源码仓库根目录把本框架初始化成 managed workspace。CLI 会拒绝这种 `new` 操作；测试真实目标项目时，必须切换到单独的外层目录。
+
+Dashboard 固定使用 6 个主阶段: `Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR`。普通阶段只展示一个核心文件: `request.md`、`plan.md`、`change-doc.md` 或 finish/PR 交付文件。review 阶段必须读取不可变 detail JSON: `reviews/plan-review/details/*.json` 和 `reviews/code-review/details/*.json`，按 `001-*`、`002-*` 等 attempt 分组展示每轮 reviewer 结果。不要依赖会被覆盖的 `summary.json` 来展示 review 细节；`recovery.md` 不进入主 stage 区域。
+
+Dashboard 的 request 区域应是纵向列表。Markdown 文件用 `marked`、`DOMPurify` 和 `highlight.js` 呈现；JSON 文件和 reviewer detail 用 `jsoneditor` 只读 view 呈现。CDN 不可用时必须回退到纯文本，不影响监控。
+
+短命令 `cad` 是 `codex-auto-dev` 的别名，例如 `cad dashboard`、`cad list`。
+
+源码维护边界:
+
+- `src/main.rs`: CLI 命令分发、workspace 初始化、tick/agent 编排和少量流程胶水。
+- `src/state.rs`: `requests.tsv`、`sessions.json`、`status.json`、approval 和事件流读写。
+- `src/review_gate.rs`: PlanReviewer、TestReviewer、DesignReviewer 的门禁执行、JSON 规范化和 review 结果写入。
+- `src/delivery.rs`: `finish` 阶段的 git commit/push、PR body 渲染和 PR connector 调用。
+- `src/doctor.rs`: 环境诊断命令。
+- `src/registry.rs`: 全局 `workspaces.json` 读写、刷新和当前 workspace 登记。
+- `src/dashboard.rs`: dashboard HTTP 服务、JSON 数据模型和 stage/review artifact 映射。
+- `src/defaults.rs`: workspace 默认目录、默认 connector、prompt、schema 和 runtime Markdown 的生成/升级。
+- `src/utils.rs`: 时间、路径、JSON 文本解析、Markdown/TSV 转义等共享小工具。
+- `src/assets.rs`: 编译期引用模板和静态资产。
+- `assets/dashboard/index.html`: dashboard 前端页面，属于固定静态资产，不是 workspace 模板。
+- `templates/prompts/*.md`: 默认 agent/reviewer prompt。
+- `templates/scripts/*.sh`: 默认 connector 脚本模板。
+- `templates/runtime/*.md`: request、plan、change-doc、agent-journal 初始模板。
+- `templates/schemas/*.json`: 默认结构化输出 schema。
+
 对非空目标仓库，`new --url` 和计划前检查会自动尝试运行 `codegraph init -i dev/repo`，让 CodeGraph MCP 能读取目标仓库索引。如果 CodeGraph CLI 不存在或初始化失败，流程只记录 warning，不得 panic。`docs/codegraph/context.md` 是给 agent/reviewer 阅读的架构文档，仍需要通过 `codegraph-project-preview` skill 生成或刷新。
 
 ## Connector Contract
@@ -97,7 +125,7 @@ codex-auto-dev doctor
 所有可替换脚本都必须遵守稳定输入输出契约，保证 issue-agent prompt 可以保持通用，不依赖 GitHub/Jira/内部系统的特定字段。
 
 - `tools/issue-update.sh`: stdout 输出零行或多行 TSV，无 header。字段必须是 `external_id<TAB>source<TAB>title<TAB>body<TAB>url`。`external_id` 必须稳定，`source` 是短平台名，`title` 是规范化需求名称，`body` 是完整需求描述，`url` 可为空。
-- `tools/issue-agent.sh`: 输入来自 `CODEX_AUTO_DEV_*` 环境变量和 runtime 文档。`CODEX_AUTO_DEV_AGENT_PHASE=planning` 时只写 `plan.md`；`implementation` 时只在 `CODEX_AUTO_DEV_WORKTREE` 写代码并更新 `change-doc.md`。成功/失败由退出码表示，失败时 stderr 必须给出可恢复原因。默认 agent/reviewer connector 不写死 Codex.app 路径；需要从普通终端运行时，可以把 `codex` 放进 `PATH`，或设置 `CODEX_AUTO_DEV_CODEX_BIN` 指向可执行文件，或设置 `CODEX_AUTO_DEV_CODEX_APP` 指向 Codex app bundle。
+- `tools/issue-agent.sh`: 输入来自 `CODEX_AUTO_DEV_*` 环境变量和 runtime 文档。它是 agent 后端 connector，不是业务提示词本身；默认实现会组合 `tools/prompts/issue-agent.md` 共享 agent 契约，以及 `tools/prompts/plan-agent.md` 或 `tools/prompts/implementation-agent.md` 的 phase-specific prompt。`CODEX_AUTO_DEV_AGENT_PHASE=planning` 时只写 `plan.md`；`implementation` 时只在 `CODEX_AUTO_DEV_WORKTREE` 写代码并更新 `change-doc.md`。成功/失败由退出码表示，失败时 stderr 必须给出可恢复原因。默认 agent/reviewer connector 不写死 Codex.app 路径；需要从普通终端运行时，可以把 `codex` 放进 `PATH`，或设置 `CODEX_AUTO_DEV_CODEX_BIN` 指向可执行文件，或设置 `CODEX_AUTO_DEV_CODEX_APP` 指向 Codex app bundle。
 - `tools/plan-review.sh`、`tools/test-review.sh`、`tools/design-review.sh`: stdout 必须是一个符合 `tools/schemas/review-result.schema.json` 的 JSON 对象。非法 JSON、空输出或脚本失败都会变成 `gate_unavailable=true` 的 blocking review；自定义 reviewer 如果无法可靠评审，也必须返回 `gate_unavailable=true` 或非 0 退出。每个 reviewer 必须返回 `recommended_next_phase`，只能是 `planning`、`implementation` 或 `blocked`。
 - reviewer 输入必须来自隔离的 `$CODEX_AUTO_DEV_REVIEW_CONTEXT`，其中只包含 request、plan、change-doc、status 和 approvals，不包含 `reviews/` 或 agent journal。code-review 中 TestReviewer 与 DesignReviewer 必须独立重新评审，不得读取其他 reviewer 输出、历史 summary/detail、上一轮 review 意见或 `$CODEX_AUTO_DEV_REVIEW_FORBIDDEN_PATHS`；DesignReviewer 不得依赖 TestReviewer 结论。
 - `tools/pr-create.sh`: 必须先判断当前平台/仓库是否支持创建 PR，再检查 base/head 是否已经存在 PR。成功时 stdout 输出一个 TSV 行: `created<TAB>url` 或 `existing<TAB>url`；旧脚本只输出 URL 仍按 created 兼容。失败时 stderr 输出原因。它不得 merge。
@@ -123,11 +151,13 @@ CodeGraph 生命周期:
 - 每一轮都必须向 `agent-journal.md` 记录读取内容、修改内容、review finding 处理、验证结果和下一步；每条 critical/high 必须有对应处理说明。
 - planning 阶段只改 change 文档，不改目标代码，不运行 `submit`、`plan-review`、`start`、`code-review`。
 - planning agent 必须让 plan 包含需求理解、目标依赖、仓库分析、目标项目内部要求、实现计划、测试验证、风险回滚和审批门禁。
+- planning agent 退出前必须做 `PlanReviewer 提交前自检`，逐项核对 PlanReviewer 会审查的需求完整性、目标顺序、代码位置、测试策略、兼容/迁移/回滚、目标项目要求、硬编码/敏感信息和审批门禁。如果自检发现会产生 critical/high 的缺口，不得退出交给 reviewer，必须先修 `plan.md` 或 block，并把自检结果写入 `agent-journal.md`。
 - plan-review 失败后的下一次 planning agent 必须读取 `reviews/plan-review/summary.json` 和最新 detail，逐条修复 `plan.md`。
 - implementation 阶段只能在 `dev/worktrees/<request_id>` 中开发，不直接编辑 `dev/repo`。
 - implementation agent 必须让 change-doc 包含实现前后对比、关键设计点、验证证据、目标项目要求完成情况和 reviewer finding 处理记录。
 - implementation agent 完成开发后必须更新相关目标项目文档和 `change-doc.md`。所有交付文档中的 checklist 必须全部打勾；无法由当前流程完成的事项不得保留为未勾选 checklist，必须移到 `后续流程`、`人工事项`、`阻塞项` 或同等章节，并写清 owner、触发条件、未完成原因和风险。不得把尚未真实完成的事项标成已完成，也不要为了凑勾篡改已批准 plan。
 - implementation agent 运行测试时，如果发现不是由本分支改动导致的已有测试失败，也必须在当前 worktree 中修复并复验，不能用“不是本分支改的”作为忽略理由。除非修复会破坏 approved plan、需要外部权限/数据或无法安全判断，否则不得 block；修复必须在 `agent-journal.md` 和 `change-doc.md` 的 Baseline failure 记录中写清失败命令、根因、修复范围和复验结果。
+- implementation agent 退出前必须做 `Code Review 提交前自检`，逐项核对 TestReviewer 的测试覆盖、失败路径、回归、baseline failure、验证证据，以及 DesignReviewer 的需求完成度、approved plan 符合度、可扩展性、硬编码、敏感信息、破坏性风险、错误处理、文档和 checklist。如果自检发现会产生 critical/high 的缺口，不得退出交给 code-review，必须先修复或 block，并把自检结果写入 `agent-journal.md` 和 `change-doc.md`。
 - code-review 失败后的下一次 implementation agent 必须同时读取 TestReviewer 和 DesignReviewer 结果，修复代码、测试、文档和 change-doc。
 - 如果 code-review summary 的 `recommended_next_phase` 为 `planning`，下一轮会回到 planning agent；这表示 approved plan 本身需要补目标、兼容、迁移、破坏性说明、测试策略或范围拆分。
 - 默认最多 20 个 review attempt；超过后外层 advance/tick 会 block。agent 自己发现无法恢复时也必须运行 `codex-auto-dev block --request_id <REQ> --stage <planning|implementation> --reason "<明确原因>"`。
@@ -232,7 +262,7 @@ codex-auto-dev upgrade --dry-run
 codex-auto-dev upgrade
 ```
 
-`upgrade` 会补齐 schema、session registry、approval 目录、简化 runtime 文档和 skill 副本。它不会覆盖 `dev/repo`、`dev/worktrees`、已填写的计划/变更文档，也不会覆盖正式 `tools/*.sh`、`tools/prompts/*.md` 或 review schema。
+`upgrade` 会补齐 schema、session registry、approval 目录、简化 runtime 文档、skill 副本，并把当前 workspace 写入全局 `workspaces.json`。它不会覆盖 `dev/repo`、`dev/worktrees`、已填写的计划/变更文档，也不会覆盖正式 `tools/*.sh`、`tools/prompts/*.md` 或 review schema。
 
 `upgrade` 会刷新框架维护的 `.example.*` 参考文件，例如 `tools/issue-update.example.sh`、`tools/issue-agent.example.sh`、`tools/plan-review.example.sh`、`tools/prompts/plan-reviewer.example.md` 和 `tools/schemas/review-result.example.schema.json`。这些文件用于比较新版默认实现、测试 connector 或手动复制到正式脚本；不要把用户本地定制直接写在 `.example.*` 里。
 

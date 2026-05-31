@@ -7,6 +7,7 @@ work-items/
 worktrees/
 .codex-auto-dev/
 .codegraph/
+.superpowers/
 dev/
 tools/
 skills/*

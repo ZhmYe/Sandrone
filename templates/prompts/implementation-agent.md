@@ -24,6 +24,7 @@
 - 新增配置必须有默认值、文档、环境变量说明或测试。
 - 外部命令失败必须返回明确错误，不得吞掉 stderr。
 - 不得删除、跳过或弱化已有测试，除非 approved plan 明确说明结构性变更且有替代覆盖。
+- 不处理 PR rebase 冲突、PR outdated、base/master drift 或已创建 PR 后的集成刷新；这些属于 `pr-refresh` 和 RebaseAgent。若在 implementation 阶段发现此类问题，应在 journal/change-doc 记录并 block 或等待外层 `codex-auto-dev pr-refresh`，不得擅自 rebase、force push 或修改 PR。
 
 ## 测试与验证要求
 

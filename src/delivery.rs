@@ -23,30 +23,24 @@ pub(crate) fn deliver_finished_request(
         return Err(format!("worktree does not exist: {}", worktree.display()).into());
     }
     let changes = git_output(&request.worktree_path, &["status", "--porcelain"])?;
-    if changes.trim().is_empty() {
-        return Err("no worktree changes to commit".into());
+    let committed = !changes.trim().is_empty();
+    if committed {
+        run_command(
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(worktree),
+        )?;
+        run_command(
+            Command::new("git")
+                .args(["commit", "-m", commit_message])
+                .current_dir(worktree),
+        )?;
     }
-
-    run_command(
-        Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(worktree),
-    )?;
-    run_command(
-        Command::new("git")
-            .args(["commit", "-m", commit_message])
-            .current_dir(worktree),
-    )?;
 
     if !remote_exists(&request.worktree_path) {
         return Err("git remote origin is required before finish can push".into());
     }
-    run_command(
-        Command::new("git")
-            .args(["push", "-u", "origin", &request.branch])
-            .current_dir(worktree)
-            .envs(proxy_env()),
-    )?;
+    let pushed_with_force_lease = push_delivery_branch(worktree, &request.branch)?;
 
     let config = load_config()?;
     let body_file = write_pr_body(request)?;
@@ -63,6 +57,8 @@ pub(crate) fn deliver_finished_request(
     Ok(DeliveryResult {
         commit_message: commit_message.to_string(),
         branch: request.branch.clone(),
+        committed,
+        pushed_with_force_lease,
         pr_url,
         pr_status,
         compare_url,
@@ -96,7 +92,7 @@ fn render_pr_review_findings(request: &Request) -> String {
     ];
     let mut rendered_stage = false;
 
-    for stage in ["plan-review", "code-review"] {
+    for stage in ["plan-review", "code-review", "integration-review"] {
         let summary_path = Path::new(&request.change_path)
             .join("reviews")
             .join(stage)
@@ -112,6 +108,8 @@ fn render_pr_review_findings(request: &Request) -> String {
             "## {}",
             if stage == "plan-review" {
                 "Plan Review"
+            } else if stage == "integration-review" {
+                "Integration Review"
             } else {
                 "Code Review"
             }
@@ -156,6 +154,8 @@ fn render_pr_review_findings(request: &Request) -> String {
 fn review_detail_file_stems(stage: &str) -> Vec<(&'static str, &'static str)> {
     if stage == "plan-review" {
         vec![("PlanReviewer", "plan-reviewer")]
+    } else if stage == "integration-review" {
+        vec![("IntegrationReviewer", "integration-reviewer")]
     } else {
         vec![
             ("TestReviewer", "test-reviewer"),
@@ -335,4 +335,36 @@ fn parse_pr_tool_success(stdout: &str) -> Result<(String, String)> {
         return Ok((status.to_string(), url.to_string()));
     }
     Ok(("created".to_string(), line.to_string()))
+}
+
+fn push_delivery_branch(worktree: &Path, branch: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["push", "-u", "origin", branch])
+        .current_dir(worktree)
+        .envs(proxy_env())
+        .output()?;
+    if output.status.success() {
+        return Ok(false);
+    }
+
+    let detail = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let non_fast_forward = detail.contains("non-fast-forward")
+        || detail.contains("fetch first")
+        || detail.contains("stale info")
+        || detail.contains("failed to push some refs");
+    if !non_fast_forward {
+        return Err(review_diagnostic_excerpt(&detail).into());
+    }
+
+    run_command(
+        Command::new("git")
+            .args(["push", "--force-with-lease", "-u", "origin", branch])
+            .current_dir(worktree)
+            .envs(proxy_env()),
+    )?;
+    Ok(true)
 }

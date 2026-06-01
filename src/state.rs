@@ -59,7 +59,7 @@ pub(crate) fn load_requests() -> Result<Vec<Request>> {
             title: fields[3].clone(),
             body: fields[4].clone(),
             url: fields[5].clone(),
-            status: fields[6].clone(),
+            status: canonical_status(&fields[6]).to_string(),
             change_name: fields[7].clone(),
             change_path: fields[8].clone(),
             branch: fields[9].clone(),
@@ -260,7 +260,8 @@ pub(crate) fn write_status_json(
 pub(crate) fn review_cycle_for_status(request: &Request) -> Result<u32> {
     let plan_attempts = review_attempt_count(request, "plan-review")?;
     let code_attempts = review_attempt_count(request, "code-review")?;
-    Ok(plan_attempts.max(code_attempts))
+    let integration_attempts = review_attempt_count(request, "integration-review")?;
+    Ok(plan_attempts.max(code_attempts).max(integration_attempts))
 }
 
 pub(crate) fn append_event(
@@ -304,6 +305,8 @@ pub(crate) fn mark_blocked(
     write_recovery_doc(request, stage, reason)?;
     let phase = if stage == "planning" {
         "planning"
+    } else if stage == "rebase" {
+        "rebase"
     } else {
         "implementation"
     };

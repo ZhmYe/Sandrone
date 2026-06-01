@@ -171,6 +171,9 @@ pub(crate) fn write_default_issue_agent_tool() -> Result<()> {
     if !Path::new(ISSUE_AGENT_TOOL).exists() {
         write_executable_file(ISSUE_AGENT_TOOL, default_issue_agent_tool_content())?;
     }
+    if !Path::new(REBASE_AGENT_TOOL).exists() {
+        write_executable_file(REBASE_AGENT_TOOL, default_rebase_agent_tool_content())?;
+    }
     if !Path::new(ISSUE_AGENT_PROMPT).exists() {
         fs::write(ISSUE_AGENT_PROMPT, default_issue_agent_prompt())?;
     }
@@ -183,6 +186,9 @@ pub(crate) fn write_default_issue_agent_tool() -> Result<()> {
             default_implementation_agent_prompt(),
         )?;
     }
+    if !Path::new(REBASE_AGENT_PROMPT).exists() {
+        fs::write(REBASE_AGENT_PROMPT, default_rebase_agent_prompt())?;
+    }
     Ok(())
 }
 
@@ -194,6 +200,10 @@ fn default_issue_agent_tool_content() -> String {
     assets::ISSUE_AGENT_SCRIPT.replace("{{CODEX_BIN_RESOLVER}}", codex_bin_resolver_shell())
 }
 
+fn default_rebase_agent_tool_content() -> String {
+    assets::REBASE_AGENT_SCRIPT.replace("{{CODEX_BIN_RESOLVER}}", codex_bin_resolver_shell())
+}
+
 pub(crate) fn write_default_pr_tool() -> Result<()> {
     if Path::new(PR_TOOL).exists() {
         return Ok(());
@@ -201,8 +211,19 @@ pub(crate) fn write_default_pr_tool() -> Result<()> {
     write_executable_file(PR_TOOL, default_pr_tool_content())
 }
 
+pub(crate) fn write_default_pr_status_tool() -> Result<()> {
+    if Path::new(PR_STATUS_TOOL).exists() {
+        return Ok(());
+    }
+    write_executable_file(PR_STATUS_TOOL, default_pr_status_tool_content())
+}
+
 fn default_pr_tool_content() -> &'static str {
     assets::PR_CREATE_SCRIPT
+}
+
+fn default_pr_status_tool_content() -> &'static str {
+    assets::PR_STATUS_SCRIPT
 }
 
 pub(crate) fn write_default_review_tools() -> Result<()> {
@@ -211,9 +232,14 @@ pub(crate) fn write_default_review_tools() -> Result<()> {
     write_default_plan_review_tool()?;
     write_default_test_review_tool()?;
     write_default_design_review_tool()?;
+    write_default_integration_review_tool()?;
     write_default_review_prompt(PLAN_REVIEW_PROMPT, default_plan_review_prompt())?;
     write_default_review_prompt(TEST_REVIEW_PROMPT, default_test_review_prompt())?;
     write_default_review_prompt(DESIGN_REVIEW_PROMPT, default_design_review_prompt())?;
+    write_default_review_prompt(
+        INTEGRATION_REVIEW_PROMPT,
+        default_integration_review_prompt(),
+    )?;
     write_default_review_schema()?;
     Ok(())
 }
@@ -241,6 +267,15 @@ fn write_default_design_review_tool() -> Result<()> {
         DESIGN_REVIEW_TOOL,
         "DesignReviewer",
         DESIGN_REVIEW_PROMPT,
+        "workspace-write",
+    )
+}
+
+fn write_default_integration_review_tool() -> Result<()> {
+    write_default_review_tool(
+        INTEGRATION_REVIEW_TOOL,
+        "IntegrationReviewer",
+        INTEGRATION_REVIEW_PROMPT,
         "workspace-write",
     )
 }
@@ -323,9 +358,21 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: true,
         },
         DefaultManagedAsset {
+            path: REBASE_AGENT_TOOL,
+            example_path: REBASE_AGENT_TOOL_EXAMPLE,
+            content: default_rebase_agent_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
             path: PR_TOOL,
             example_path: PR_TOOL_EXAMPLE,
             content: default_pr_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
+            path: PR_STATUS_TOOL,
+            example_path: PR_STATUS_TOOL_EXAMPLE,
+            content: default_pr_status_tool_content().to_string(),
             executable: true,
         },
         DefaultManagedAsset {
@@ -359,6 +406,16 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: true,
         },
         DefaultManagedAsset {
+            path: INTEGRATION_REVIEW_TOOL,
+            example_path: INTEGRATION_REVIEW_TOOL_EXAMPLE,
+            content: default_review_tool_content(
+                "IntegrationReviewer",
+                INTEGRATION_REVIEW_PROMPT,
+                "workspace-write",
+            ),
+            executable: true,
+        },
+        DefaultManagedAsset {
             path: ISSUE_AGENT_PROMPT,
             example_path: ISSUE_AGENT_PROMPT_EXAMPLE,
             content: default_issue_agent_prompt().to_string(),
@@ -377,6 +434,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: false,
         },
         DefaultManagedAsset {
+            path: REBASE_AGENT_PROMPT,
+            example_path: REBASE_AGENT_PROMPT_EXAMPLE,
+            content: default_rebase_agent_prompt().to_string(),
+            executable: false,
+        },
+        DefaultManagedAsset {
             path: PLAN_REVIEW_PROMPT,
             example_path: PLAN_REVIEW_PROMPT_EXAMPLE,
             content: default_plan_review_prompt().to_string(),
@@ -392,6 +455,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             path: DESIGN_REVIEW_PROMPT,
             example_path: DESIGN_REVIEW_PROMPT_EXAMPLE,
             content: default_design_review_prompt().to_string(),
+            executable: false,
+        },
+        DefaultManagedAsset {
+            path: INTEGRATION_REVIEW_PROMPT,
+            example_path: INTEGRATION_REVIEW_PROMPT_EXAMPLE,
+            content: default_integration_review_prompt().to_string(),
             executable: false,
         },
         DefaultManagedAsset {
@@ -462,6 +531,10 @@ fn default_implementation_agent_prompt() -> &'static str {
     assets::IMPLEMENTATION_AGENT_PROMPT
 }
 
+fn default_rebase_agent_prompt() -> &'static str {
+    assets::REBASE_AGENT_PROMPT
+}
+
 fn default_plan_review_prompt() -> &'static str {
     assets::PLAN_REVIEWER_PROMPT
 }
@@ -472,6 +545,10 @@ fn default_test_review_prompt() -> &'static str {
 
 fn default_design_review_prompt() -> &'static str {
     assets::DESIGN_REVIEWER_PROMPT
+}
+
+fn default_integration_review_prompt() -> &'static str {
+    assets::INTEGRATION_REVIEWER_PROMPT
 }
 
 pub(crate) fn write_default_workflow_skill() -> Result<()> {

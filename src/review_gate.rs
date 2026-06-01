@@ -98,6 +98,10 @@ pub(crate) fn code_review(args: &[String]) -> Result<()> {
             "code-review",
             "TestReviewer and DesignReviewer approved the code review gate",
         )?;
+        mark_wait_update_pr_by_id(
+            &request_id,
+            "code-review approved; waiting for PR creation or update",
+        )?;
         println!("Code review approved for {request_id}");
         println!(
             "  review summary: {}/reviews/code-review/summary.json",
@@ -157,6 +161,88 @@ pub(crate) fn code_review(args: &[String]) -> Result<()> {
         }
         let rejected = rejected_reviewers(&results);
         Err(format!("{} rejected code review", rejected.join(", ")).into())
+    }
+}
+
+pub(crate) fn integration_review(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, &request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    ensure_change_packet(&request)?;
+    ensure_gate_approved(&request, "plan")?;
+    if request.worktree_path.trim().is_empty() {
+        return Err(
+            format!("{request_id} has no worktree. Run codex-auto-dev start first.").into(),
+        );
+    }
+
+    let reviewers = [ReviewDefinition {
+        name: "IntegrationReviewer",
+        tool: INTEGRATION_REVIEW_TOOL,
+        file_stem: "integration-reviewer",
+    }];
+    let results = run_review_stage(&request, "integration-review", &reviewers)?;
+    if reviews_approved(&results) {
+        approve_gate_from_review(
+            &mut requests,
+            index,
+            &mut request,
+            "change-doc",
+            "IntegrationReviewer",
+            "integration-review",
+            "IntegrationReviewer approved the rebase integration gate",
+        )?;
+        mark_wait_update_pr_by_id(
+            &request_id,
+            "integration-review approved; waiting for PR branch update",
+        )?;
+        println!("Integration review approved for {request_id}");
+        println!(
+            "  review summary: {}/reviews/integration-review/summary.json",
+            request.change_path
+        );
+        println!(
+            "  approval: {}",
+            approval_file_path(&request, "change-doc").display()
+        );
+        Ok(())
+    } else {
+        if review_gate_unavailable(&results) {
+            let reason = review_gate_unavailable_reason("integration-review", &results);
+            mark_blocked(&mut requests, index, &mut request, "rebase", &reason)?;
+            return Err(format!(
+                "{} review gate unavailable: {reason}",
+                rejected_reviewers(&results).join(", ")
+            )
+            .into());
+        }
+        match recommended_next_phase(&results, "implementation").as_str() {
+            "blocked" => {
+                mark_blocked(
+                    &mut requests,
+                    index,
+                    &mut request,
+                    "rebase",
+                    "integration-review recommended blocking; manual recovery is required",
+                )?;
+            }
+            _ => {
+                mark_review_rejected(
+                    &mut requests,
+                    index,
+                    &mut request,
+                    "rebase",
+                    "integration-review",
+                    "integration-review rejected; return to RebaseAgent",
+                )?;
+            }
+        }
+        let rejected = rejected_reviewers(&results);
+        Err(format!("{} rejected integration review", rejected.join(", ")).into())
     }
 }
 
@@ -544,7 +630,7 @@ fn update_change_doc_review_section(request: &Request) -> Result<()> {
 
 fn render_review_results_section(request: &Request) -> String {
     let mut lines = vec!["## Review 结果".to_string(), String::new()];
-    for stage in ["plan-review", "code-review"] {
+    for stage in ["plan-review", "code-review", "integration-review"] {
         let summary_path = Path::new(&request.change_path)
             .join("reviews")
             .join(stage)
@@ -557,10 +643,11 @@ fn render_review_results_section(request: &Request) -> String {
         let attempt = json_number(&content, "attempt").unwrap_or(0);
         lines.push(format!(
             "### {}",
-            if stage == "plan-review" {
-                "Plan Review"
-            } else {
-                "Code Review"
+            match stage {
+                "plan-review" => "Plan Review",
+                "code-review" => "Code Review",
+                "integration-review" => "Integration Review",
+                _ => stage,
             }
         ));
         lines.push(String::new());
@@ -570,7 +657,12 @@ fn render_review_results_section(request: &Request) -> String {
         ));
         lines.push(format!("- 尝试次数: {attempt}"));
         lines.push(format!("- 详情: `reviews/{stage}/summary.json`"));
-        for reviewer in ["PlanReviewer", "TestReviewer", "DesignReviewer"] {
+        for reviewer in [
+            "PlanReviewer",
+            "TestReviewer",
+            "DesignReviewer",
+            "IntegrationReviewer",
+        ] {
             if content.contains(&format!("\"reviewer\": \"{reviewer}\"")) {
                 lines.push(format!("- {reviewer}: 已记录"));
             }

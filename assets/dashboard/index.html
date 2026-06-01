@@ -282,21 +282,80 @@
       background: var(--surface-strong);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 18px 16px 12px;
+      padding: 18px 16px 18px;
       overflow-x: auto;
     }
-    .stage-row {
+    .timeline-track {
       min-width: 760px;
+      min-height: 86px;
+      position: relative;
+      transition: min-height 180ms ease;
+    }
+    .integration-connector {
+      position: absolute;
+      inset: 0;
+      display: none;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .timeline-track.has-integration .integration-connector {
+      display: block;
+    }
+    .integration-connector path {
+      fill: none;
+      stroke: var(--line-strong);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-dasharray: 8 10;
+      opacity: 0.86;
+    }
+    .timeline-track.has-integration {
+      min-height: 184px;
+    }
+    .stage-row {
       display: grid;
-      grid-template-columns: repeat(6, minmax(96px, 1fr));
       position: relative;
     }
-    .stage-row::before {
+    .timeline-main {
+      height: 86px;
+      grid-template-columns: repeat(6, minmax(96px, 1fr));
+    }
+    .timeline-main::before {
       content: "";
       position: absolute;
       top: 18px;
       left: 8%;
       right: 8%;
+      height: 2px;
+      background: var(--line);
+      z-index: 0;
+    }
+    .timeline-track.has-integration .timeline-main {
+      grid-template-columns: repeat(5, minmax(108px, 1fr));
+    }
+    .timeline-track.has-integration .timeline-main::before {
+      left: 10%;
+      right: 10%;
+    }
+    .timeline-branch {
+      display: none;
+    }
+    .timeline-track.has-integration .timeline-branch {
+      display: grid;
+      width: min(560px, 76%);
+      height: 76px;
+      margin: 26px auto 0;
+      grid-template-columns: repeat(3, minmax(128px, 1fr));
+    }
+    .timeline-track.has-integration .timeline-branch::before {
+      content: "";
+      position: absolute;
+      top: 18px;
+      left: 16%;
+      right: 16%;
       height: 2px;
       background: var(--line);
       z-index: 0;
@@ -325,6 +384,11 @@
     }
     .stage.done .dot { border-color: var(--green); color: var(--green); background: var(--green-soft); }
     .stage.active .dot { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.10); }
+    .stage.branch .dot { border-color: var(--line-strong); color: var(--muted); background: #f3f6fa; }
+    .stage.branch.done .dot { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+    .stage.branch.active .dot { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
+    .stage.branch.pending { opacity: 1; }
+    .stage.branch.pending .dot { border-color: var(--line-strong); color: var(--muted); background: #f3f6fa; }
     .stage.selected .dot { transform: scale(1.08); }
     .stage-label {
       font-size: 12px;
@@ -563,7 +627,15 @@
         <div class="request-list" id="requests"></div>
       </section>
       <section class="detail">
-        <div class="timeline"><div class="stage-row" id="timeline"></div></div>
+        <div class="timeline">
+          <div class="timeline-track">
+            <svg class="integration-connector" id="integration-connector" aria-hidden="true">
+              <path id="integration-connector-path"></path>
+            </svg>
+            <div class="stage-row timeline-main" id="timeline-main"></div>
+            <div class="stage-row timeline-branch" id="timeline-branch"></div>
+          </div>
+        </div>
         <div class="artifact">
           <div class="artifact-head">
             <div>
@@ -586,7 +658,11 @@
     const els = {
       projects: document.querySelector("#projects"),
       requests: document.querySelector("#requests"),
-      timeline: document.querySelector("#timeline"),
+      timelineTrack: document.querySelector(".timeline-track"),
+      integrationConnector: document.querySelector("#integration-connector"),
+      integrationConnectorPath: document.querySelector("#integration-connector-path"),
+      timelineMain: document.querySelector("#timeline-main"),
+      timelineBranch: document.querySelector("#timeline-branch"),
       stats: document.querySelector("#stats"),
       projectTitle: document.querySelector("#project-title"),
       projectSubtitle: document.querySelector("#project-subtitle"),
@@ -599,6 +675,10 @@
     };
 
     els.refresh.addEventListener("click", load);
+    window.addEventListener("resize", () => {
+      const request = currentRequest();
+      updateIntegrationConnector(!!request && hasIntegrationFlow(request));
+    });
     load();
     setInterval(load, 15000);
 
@@ -607,7 +687,7 @@
       state.data = await response.json();
       state.project = clamp(state.project, state.data.projects.length);
       const project = currentProject();
-      state.request = clamp(state.request, project ? project.requests.length : 0);
+      state.request = clamp(state.request, project ? orderedRequests(project).length : 0);
       render();
     }
 
@@ -622,7 +702,7 @@
 
     function currentRequest() {
       const project = currentProject();
-      return project && project.requests[state.request];
+      return project && orderedRequests(project)[state.request];
     }
 
     function currentStage() {
@@ -697,7 +777,8 @@
         stat("需求", project.request_count),
         stat("阻塞", counts.blocked || 0),
         stat("进行中", (counts["planning-agent-running"] || 0) + (counts["implementation-agent-running"] || 0)),
-        stat("待交付", (counts["waiting-finish"] || 0) + (counts["change-doc-approved"] || 0))
+        stat("待交付", (counts["wait-update-pr"] || 0) + (counts["change-doc-approved"] || 0)),
+        stat("PR 待合并", counts["wait-finish"] || 0)
       ].join("");
     }
 
@@ -705,14 +786,29 @@
       return `<div class="stat"><strong>${value}</strong><span>${label}</span></div>`;
     }
 
+    function orderedRequests(project) {
+      return (project?.requests || [])
+        .map((request, index) => ({ request, index }))
+        .sort((left, right) =>
+          requestSortRank(left.request) - requestSortRank(right.request)
+          || left.index - right.index
+        )
+        .map(item => item.request);
+    }
+
+    function requestSortRank(request) {
+      return request.status === "finished" ? 1 : 0;
+    }
+
     function renderRequests() {
       const project = currentProject();
+      const requests = orderedRequests(project);
       els.requests.innerHTML = "";
-      if (!project || !project.requests.length) {
+      if (!requests.length) {
         els.requests.innerHTML = `<div class="empty">当前项目还没有 request。</div>`;
         return;
       }
-      project.requests.forEach((request, index) => {
+      requests.forEach((request, index) => {
         const button = document.createElement("button");
         button.className = `request ${index === state.request ? "active" : ""}`;
         button.innerHTML = `
@@ -738,13 +834,71 @@
 
     function renderTimeline() {
       const request = currentRequest();
-      els.timeline.innerHTML = "";
-      if (!request) return;
-      state.stage = clamp(state.stage, request.stages.length);
-      request.stages.forEach((stage, index) => {
+      els.timelineMain.innerHTML = "";
+      els.timelineBranch.innerHTML = "";
+      if (!request) {
+        updateIntegrationConnector(false);
+        return;
+      }
+      const indexedStages = request.stages.map((stage, index) => ({ stage, index }));
+      const hasIntegration = hasIntegrationFlow(request);
+      els.timelineTrack.classList.toggle("has-integration", hasIntegration);
+      const visibleItems = visibleTimelineItems(indexedStages, hasIntegration);
+      if (!visibleItems.some(item => item.index === state.stage)) {
+        const fallback = visibleItems.find(item => item.stage.stage_id === request.stage) || visibleItems[0];
+        state.stage = fallback ? fallback.index : 0;
+      }
+      const mainStages = visibleItems.filter(item => !isLowerTimelineStage(item.stage.stage_id, hasIntegration));
+      const lowerStages = orderedLowerTimelineStages(visibleItems, hasIntegration);
+      mainStages.forEach((item, displayIndex) => {
+        els.timelineMain.appendChild(stageButton(item.stage, item.index, displayIndex + 1, false));
+      });
+      lowerStages.forEach(item => {
+        els.timelineBranch.appendChild(stageButton(item.stage, item.index, lowerStageMarker(item.stage.stage_id), true));
+      });
+      updateIntegrationConnector(hasIntegration);
+    }
+
+    function isBranchStage(stageId) {
+      return stageId === "pr-refresh" || stageId === "integration-review";
+    }
+
+    function hasIntegrationFlow(request) {
+      const integration = request.stages.find(stage => stage.stage_id === "integration-review");
+      return !!integration && (integration.review_attempts || []).length > 0;
+    }
+
+    function visibleTimelineItems(indexedStages, hasIntegration) {
+      if (!hasIntegration) {
+        return indexedStages.filter(item => !isBranchStage(item.stage.stage_id));
+      }
+      return indexedStages.filter(item =>
+        !isBranchStage(item.stage.stage_id) || item.stage.stage_id === "pr-refresh" || item.stage.stage_id === "integration-review"
+      );
+    }
+
+    function isLowerTimelineStage(stageId, hasIntegration) {
+      return hasIntegration && (stageId === "pr-refresh" || stageId === "integration-review" || stageId === "finish-pr");
+    }
+
+    function orderedLowerTimelineStages(visibleItems, hasIntegration) {
+      if (!hasIntegration) return [];
+      return ["pr-refresh", "integration-review", "finish-pr"]
+        .map(stageId => visibleItems.find(item => item.stage.stage_id === stageId))
+        .filter(Boolean);
+    }
+
+    function lowerStageMarker(stageId) {
+      if (stageId === "pr-refresh") return "PR";
+      if (stageId === "integration-review") return "IR";
+      return "F";
+    }
+
+    function stageButton(stage, index, displayNumber, branch) {
         const button = document.createElement("button");
-        button.className = `stage ${stage.state} ${index === state.stage ? "selected" : ""}`;
-        button.innerHTML = `<span class="dot">${index + 1}</span><span class="stage-label">${escapeHtml(stage.label)}</span>`;
+        button.className = `stage ${branch ? "branch" : ""} ${stage.state} ${index === state.stage ? "selected" : ""}`;
+        button.dataset.stageId = stage.stage_id;
+        button.innerHTML = `<span class="dot">${displayNumber}</span><span class="stage-label">${escapeHtml(stage.label)}</span>`;
         button.addEventListener("click", () => {
           state.stage = index;
           state.attempt = 0;
@@ -752,8 +906,37 @@
           renderTimeline();
           renderArtifact();
         });
-        els.timeline.appendChild(button);
-      });
+        return button;
+    }
+
+    function updateIntegrationConnector(hasIntegration) {
+      if (!hasIntegration) {
+        els.integrationConnectorPath.setAttribute("d", "");
+        return;
+      }
+      const codeStage = els.timelineMain.querySelector('[data-stage-id="code-review"]');
+      const codeDot = codeStage && codeStage.querySelector(".dot");
+      const refreshStage = els.timelineBranch.querySelector('[data-stage-id="pr-refresh"]');
+      const refreshDot = refreshStage && refreshStage.querySelector(".dot");
+      if (!codeStage || !codeDot || !refreshStage || !refreshDot) return;
+      const trackRect = els.timelineTrack.getBoundingClientRect();
+      const startRect = codeDot.getBoundingClientRect();
+      const endRect = refreshDot.getBoundingClientRect();
+      const startX = startRect.left + startRect.width * 0.36 - trackRect.left;
+      const startY = startRect.bottom + 8 - trackRect.top;
+      const endX = endRect.left + endRect.width * 0.64 - trackRect.left;
+      const endY = endRect.top - 8 - trackRect.top;
+      const distanceX = Math.max(0, startX - endX);
+      const bend = Math.min(150, Math.max(64, distanceX * 0.16));
+      const vertical = Math.max(1, endY - startY);
+      const path = [
+        `M ${startX.toFixed(1)} ${startY.toFixed(1)}`,
+        `C ${(startX - bend).toFixed(1)} ${(startY + vertical * 0.18).toFixed(1)},`,
+        `${(endX + bend).toFixed(1)} ${(endY - vertical * 0.18).toFixed(1)},`,
+        `${endX.toFixed(1)} ${endY.toFixed(1)}`
+      ].join(" ");
+      els.integrationConnector.setAttribute("viewBox", `0 0 ${trackRect.width.toFixed(1)} ${trackRect.height.toFixed(1)}`);
+      els.integrationConnectorPath.setAttribute("d", path);
     }
 
     function renderArtifact() {
@@ -917,7 +1100,7 @@
 
     function statusClass(status) {
       if (status === "blocked") return "blocked";
-      if (status === "finished" || status === "waiting-finish" || status === "change-doc-approved") return "done";
+      if (status === "finished") return "done";
       if (status.includes("running") || status === "in-progress") return "running";
       return "";
     }

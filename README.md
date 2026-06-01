@@ -11,7 +11,7 @@
 - 从 GitHub issue、内部工作空间、工单系统或自定义脚本中持续抓取未完成需求。
 - 让每个需求拥有独立 `REQ-0001` 编号、独立计划、独立 review 记录、独立 worktree 和独立交付分支。
 - 用 Codex 自动写计划和代码，但把审批、review、状态和恢复都落到文件和事件流里。
-- 在无人值守场景下定时 `tick`，自动推进已发现需求；在 `waiting-finish` 前停止，等待人类决定是否 commit、push 和 PR。
+- 在无人值守场景下定时 `tick`，自动推进已发现需求；最终停在 `wait-update-pr`，等待人类决定是否 commit、push 和 PR。
 - 提供本地监控前端: 全局 registry 记录所有 workspace，`dashboard` 可以按项目查看需求、stage、核心文件和多轮 review detail。
 
 不适合的场景:
@@ -28,7 +28,7 @@
 - agent 只交付当前 phase: planning agent 只写计划；implementation agent 只在独立 worktree 中写代码和变更文档。
 - connector 可替换: issue、agent、reviewer、PR 都是 `tools/*.sh`，默认走 GitHub + Codex CLI，但可以换成内部系统、Claude Code、OpenAI API 或其他后端。
 - 自动化可恢复: `tick` 和 `advance` 使用状态文件和 per-request lock，避免重复派发；blocked request 可通过 `resume` 恢复。
-- 最终交付显式触发: `tick` 不会运行 `finish`，也不会 merge。只有用户或操作者显式运行 `finish` 才会 commit、push、创建或复用 PR。
+- 最终交付显式触发: `tick` 不会运行 `finish`，也不会 merge。只有用户或操作者显式运行 `finish` 才会 commit、push、创建或复用 PR。PR 创建后如 base/master 前进或发生冲突，使用 `pr-refresh` 支线 rebase，并通过 IntegrationReviewer 后再刷新 PR。
 
 ## 架构目录
 
@@ -147,9 +147,23 @@ flowchart TD
   code_ok -- "否: implementation" --> impl_agent
   code_ok -- "否: planning" --> plan_agent
   code_ok -- "否: blocked/gate unavailable" --> blocked
-  code_ok -- "是" --> waiting["waiting-finish"]
+  code_ok -- "是" --> waiting["wait-update-pr"]
   waiting --> finish["用户运行 finish"]
   finish --> pr["commit + push + tools/pr-create.sh"]
+  pr --> wait_finish["wait-finish: PR 待合并"]
+  wait_finish --> pr_status["pr-status / 二次 finish"]
+  pr_status --> merged{"PR merged?"}
+  merged -- "是" --> finished["finished"]
+  merged -- "否" --> wait_finish
+  wait_finish --> drift{"PR 过期或冲突?"}
+  drift -- "是" --> refresh["pr-refresh: fetch + rebase"]
+  refresh --> clean{"clean rebase?"}
+  clean -- "是" --> integration["IntegrationReviewer"]
+  clean -- "否" --> rebase_agent["RebaseAgent 解决冲突"]
+  rebase_agent --> integration
+  integration --> refresh_ok{"通过?"}
+  refresh_ok -- "是" --> waiting
+  refresh_ok -- "否" --> rebase_agent
 ```
 
 状态机简图:
@@ -170,8 +184,9 @@ stateDiagram-v2
   change_doc_submitted --> code_review_rejected
   code_review_rejected --> implementation_agent_running
   code_review_rejected --> planning_agent_running
-  change_doc_approved --> waiting_finish
-  waiting_finish --> finished
+  change_doc_approved --> wait_update_pr
+  wait_update_pr --> wait_finish
+  wait_finish --> finished
   discovered --> blocked
   planning_agent_running --> blocked
   plan_submitted --> blocked
@@ -430,9 +445,10 @@ Dashboard 依赖全局 `~/.codex-auto-dev/workspaces.json` 查找所有项目。
 页面当前支持:
 
 - 左侧项目侧边栏，按项目分组展示本机所有已登记 workspace。
-- 项目标签只显示三类: `blocked`、`pending`、`finish`。`finish` 只统计真正 `finished` 的 request；`pending` 包含 `waiting-finish` 以及所有非 blocked、非 finished 的状态。
+- 项目标签只显示三类: `blocked`、`pending`、`finish`。`finish` 只统计真正 `finished` 的 request；`pending` 包含 `wait-update-pr`、`wait-finish` 以及所有非 blocked、非 finished 的状态。
 - 右侧 request 纵向列表，可点击切换需求；列表有最大高度，超出后内部滚动。
-- 6 段 timeline: `Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR`。
+- Request 列表会优先展示未完成项；`finished` 会稳定排在后面，避免新发现或待处理需求被已完成需求压住。
+- 默认主线 6 段 timeline: `Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR`；只有存在 `integration-review` 记录时，才切换为双层 timeline: 上层到 `Code Review` 为止，下层居中展示 `PR Refresh -> Integration Review -> Finish / PR`。Integration Review 通过后状态回到 `wait-update-pr`，下层 `Finish / PR` 作为当前待操作节点显示，直到再次运行 `finish` 推送并刷新 PR。
 - 点击 stage 后，下方只展示当前 stage 的核心文件或 review detail。
 - Markdown 使用 `marked` + `DOMPurify` + `highlight.js` 渲染；JSON/reviewer detail 使用 `jsoneditor` 只读展示。
 - 页面整体可以自然超过一屏并由浏览器滚动；项目列表、request 列表和下方 Markdown/JSON 阅读区各自有最大高度和内部滚动。
@@ -471,6 +487,7 @@ Dashboard 依赖全局 `~/.codex-auto-dev/workspaces.json` 查找所有项目。
 | `codex-auto-dev start --request_id REQ-0001` | 在 plan approval 有效后创建 worktree 和 request 分支。 |
 | `codex-auto-dev submit --request_id REQ-0001 --gate change-doc` | 提交 change-doc gate。 |
 | `codex-auto-dev code-review --request_id REQ-0001` | 运行 TestReviewer 和 DesignReviewer。 |
+| `codex-auto-dev integration-review --request_id REQ-0001` | 运行 PR rebase/冲突解决后的轻量集成门禁。 |
 | `codex-auto-dev approvals --request_id REQ-0001` | 查看 approval 状态。 |
 | `codex-auto-dev approvals --request_id REQ-0001 --json` | 以 JSON 查看 approval 状态。 |
 | `codex-auto-dev approve --request_id REQ-0001 --gate plan --by <actor>` | 人工批准 gate。 |
@@ -482,7 +499,9 @@ Dashboard 依赖全局 `~/.codex-auto-dev/workspaces.json` 查找所有项目。
 | --- | --- |
 | `codex-auto-dev block --request_id REQ-0001 --stage implementation --reason "<reason>"` | 显式标记 blocked 并写入 `recovery.md`。 |
 | `codex-auto-dev resume --request_id REQ-0001` | 从 blocked 恢复到 `planning` 或 `in-progress`，同步 `requests.tsv` 和 `status.json`。 |
-| `codex-auto-dev finish --request_id REQ-0001 --message "feat: add feature"` | 在 change-doc approval 有效后 commit、push 分支并调用 PR connector。 |
+| `codex-auto-dev finish --request_id REQ-0001 --message "feat: add feature"` | 在 change-doc approval 有效后 commit、push 分支并调用 PR connector；成功后进入 `wait-finish`。 |
+| `codex-auto-dev pr-status --request_id REQ-0001` | 调用 PR 状态脚本；`merged` 标记 `finished`，`open` 保持/修正为 `wait-finish`，`missing` 或 `closed` 回到 `wait-update-pr`。 |
+| `codex-auto-dev pr-refresh --request_id REQ-0001` | PR 已创建后同步 base/master，尝试 rebase；冲突时派发 RebaseAgent，完成后必须过 IntegrationReviewer。 |
 
 ## Runtime 文档包
 
@@ -505,6 +524,11 @@ docs/changes/<YYYY-MM-DD-request-name>/
     code-review/
       summary.json
       details/
+    integration-review/
+      summary.json
+      details/
+  pr-conflicts/
+    attempts/
 ```
 
 文档职责:
@@ -519,6 +543,7 @@ docs/changes/<YYYY-MM-DD-request-name>/
 | `approvals/*.json` | 文件化审批，包含 artifact hash；文档修改后 approval 会过期。 |
 | `reviews/*/summary.json` | 当前 review stage 汇总。 |
 | `reviews/*/details/*.json` | 每个 reviewer、每一轮 attempt 的原始结构化结果。 |
+| `pr-conflicts/attempts/*.md` | PR rebase 冲突记录；每次真正发生冲突时递增编号，clean rebase 不写入这里。 |
 
 `plan.html`、runtime `spec.md` 和 runtime `tasks.md` 已不再生成。`plan.md` 合并规格、计划和任务清单，`change-doc.md` 汇总最终实现与 review。
 
@@ -526,10 +551,24 @@ docs/changes/<YYYY-MM-DD-request-name>/
 
 `codex-auto-dev dashboard` 会读取全局 `workspaces.json`，刷新每个仍存在的 workspace，然后在浏览器里按项目展示需求进度。
 
+Request 列表只做展示层排序，不改变 API、`requests.tsv` 或状态机数据:
+
+1. 未完成 request 排在前面，包括 `discovered`、agent running、review rejected、`wait-update-pr`、`wait-finish` 和 `blocked`。
+2. `finished` request 排在后面。
+3. 同一组内保留原始 request 顺序，刷新页面时不会因为排序规则产生无意义跳动。
+
 主 timeline 固定为 6 个阶段:
 
 ```text
 Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR
+```
+
+PR 已创建后，如果运行 `codex-auto-dev pr-refresh` 并产生 Integration Review 记录，dashboard 会切换为双层 timeline；Integration Review 通过后，request 回到 `wait-update-pr`，表示还需要再次运行 `finish` 把 rebase 后的分支推到远端:
+
+```text
+Request -> Plan -> Plan Review -> Implementation -> Code Review
+                                      ...
+                          PR Refresh -> Integration Review -> Finish / PR (active)
 ```
 
 普通阶段只展示一个核心文件:
@@ -540,23 +579,33 @@ Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR
 | Plan | `plan.md`。 |
 | Implementation | `change-doc.md`。 |
 | Finish / PR | 优先显示 `.codex-auto-dev/state/<REQ>-pr-body.md`，否则显示 `status.json`。 |
+| PR Refresh | 优先展示 `pr-conflicts/attempts/*.md` 中的真实 rebase 冲突 attempt；如果没有冲突 attempt，才回退展示 `change-doc.md` 中抽取出的 `PR 集成刷新记录` / `PR 冲突记录` 章节。 |
 
 review 阶段是例外:
 
 - Plan Review 读取 `reviews/plan-review/details/*.json`。
 - Code Review 读取 `reviews/code-review/details/*.json`。
+- Integration Review 读取 `reviews/integration-review/details/*.json`。
 - 多轮 review 会按文件名前缀 `001-*`、`002-*` 分组展示。
 - 页面不依赖 `summary.json` 呈现 review 详情，因为 summary 只代表最新汇总且可能被覆盖。
 - `recovery.md` 不进入主 stage 区域；阻塞时可以从 `status.json`、事件流或命令行恢复流程继续查看。
 
 页面呈现规则:
 
-- 左侧项目卡片只显示 `blocked`、`pending`、`finish` 三个状态标签；不再单独显示 `waiting`、`running` 或 request 总数。`pending` 包含 `waiting-finish`。
-- request 区域是纵向列表，不是卡片瀑布流，便于扫描较多需求。
+- 左侧项目卡片只显示 `blocked`、`pending`、`finish` 三个状态标签；不再单独显示 `waiting`、`running` 或 request 总数。`pending` 包含 `wait-update-pr` 和 `wait-finish`；顶部统计会单独显示 `PR 待合并`。
+- request 区域是纵向列表，不是卡片瀑布流，便于扫描较多需求；未完成 request 永远优先显示，已完成 request 收在后面。
 - request 列表、项目列表和下方 artifact 阅读区都有最大高度；超过上限后在局部区域内部滚动，整个 dashboard 页面本身也允许自然超过一屏。
 - Markdown 文件通过 `marked` 渲染，使用 `DOMPurify` 清洗 HTML，并用 `highlight.js` 高亮代码块。
 - JSON 文件和 reviewer detail 通过 `jsoneditor` 的只读 view 模式展示，支持折叠查看。
 - 如果 CDN 不可用，页面会回退到纯文本展示，不影响核心监控能力。
+
+常见交付状态:
+
+| 状态 | 含义 | 下一步 |
+| --- | --- | --- |
+| `wait-update-pr` | review 已通过，但 PR 尚未创建、创建失败，或 rebase/IntegrationReviewer 通过后需要重新更新 PR 分支。 | 运行 `finish --request_id <REQ>`。 |
+| `wait-finish` | PR 已创建或已更新，正在等待平台合并。 | 合并后运行 `pr-status --request_id <REQ>`。 |
+| `finished` | PR 已由 `tools/pr-status.sh` 确认合并。 | 无需继续自动推进。 |
 
 ## Connector Contract
 
@@ -679,6 +728,18 @@ existing<TAB>url
 
 旧脚本只输出 URL 仍按 `created` 兼容。失败时 stderr 输出原因，不得 merge。
 
+### `tools/pr-status.sh`
+
+`pr-status` 和 `pr-refresh` 调用。脚本只观察 PR 状态，不修改代码、分支或 PR。
+
+成功时 stdout 输出:
+
+```text
+status<TAB>url<TAB>detail
+```
+
+推荐 status: `open`、`missing`、`merged`、`closed`、`unknown`。GitHub 默认实现使用 `gh pr list` 按 base/head 查找已有 PR；内部平台可以替换该脚本。
+
 ## 自动化运行
 
 `tick` 是短主控:
@@ -688,7 +749,7 @@ existing<TAB>url
 3. 选择 eligible request。
 4. 在并发上限内派发 planning 或 implementation agent。
 5. 对漏掉 hook 的 request 执行 `advance` 兜底推进。
-6. code-review 通过后停在 `waiting-finish`。
+6. code-review 通过后停在 `wait-update-pr`。
 
 新 workspace 默认:
 
@@ -714,7 +775,7 @@ codex-auto-dev tick
 
 ## Finish 与 PR
 
-自动流程结束在 `waiting-finish`:
+自动流程结束在 `wait-update-pr`:
 
 ```bash
 codex-auto-dev list
@@ -733,7 +794,15 @@ codex-auto-dev finish --request_id REQ-0001 --message "feat: add movement hero s
 2. 在 request worktree 中 commit。
 3. push request 分支。
 4. 调用 `tools/pr-create.sh` 创建或复用 PR。
-5. 标记 request 为 `finished`。
+5. PR 创建或复用成功后标记 request 为 `wait-finish`；如果 PR connector 失败，则保持 `wait-update-pr`，允许修复 connector 后重试。
+
+`wait-finish` 表示 PR 已提交但尚未合并。PR 合入后运行:
+
+```bash
+codex-auto-dev pr-status --request_id REQ-0001
+```
+
+或者再次运行 `finish --request_id REQ-0001`。这两个入口都会调用 `tools/pr-status.sh`，只有脚本返回 `merged` 时才把 request 标记为 `finished`。如果旧版本把 open PR 误标为 `finished`，运行 `pr-status` 会根据脚本结果修正为 `wait-finish`；如果脚本返回 `missing` 或 `closed`，则回到 `wait-update-pr`，等待重新创建或更新 PR。
 
 PR body 会包含:
 
@@ -743,6 +812,49 @@ PR body 会包含:
 - 自动评审意见，包括 warning/info finding 的证据、影响、必要修复、建议修改和验证方式。
 
 `finish` 不会 merge。
+
+### PR Refresh / Rebase 支线
+
+PR 已创建后，如果 GitHub 或内部平台提示和 base/master 冲突，或者过一段时间后希望刷新到最新 base，运行:
+
+```bash
+codex-auto-dev pr-refresh --request_id REQ-0001
+```
+
+`pr-refresh` 会:
+
+1. 调用 `tools/pr-status.sh` 记录当前 PR 状态。
+2. 在 request worktree 中 fetch base 分支。
+3. 尝试 `git rebase origin/<base>`。
+4. clean rebase 时更新 `change-doc.md` 的 `PR 集成刷新记录`，然后运行 IntegrationReviewer。
+5. rebase 冲突时写入 `pr-conflicts/attempts/NNN-rebase-conflict.md` 和 `change-doc.md` 的 `PR 冲突记录`，然后进入 `rebase-agent-running`，派发 RebaseAgent 解决冲突；agent 退出后 hook 会调用 `advance`，继续运行 IntegrationReviewer。
+6. IntegrationReviewer 通过后重新批准 `change-doc`，request 回到 `wait-update-pr`。
+
+IntegrationReviewer 是轻量集成门禁，不替代首次实现后的 TestReviewer + DesignReviewer。它重点审:
+
+- 冲突文件是否解决干净，没有 `<<<<<<<`、`=======`、`>>>>>>>` 残留。
+- 是否保留 approved plan 和已通过 code-review 的实现语义。
+- 是否只做集成适配，没有扩大需求范围。
+- 是否处理了 base/master 新代码带来的接口、测试、配置或行为变化。
+- 是否保留 base/master 新修改，不能为了自己分支的修改删除 base/master 新代码。
+- 是否运行目标项目测试或合理替代验证。
+- `change-doc.md` 是否记录冲突原因、解决方式、实现前后对比和验证结果。
+
+如果 IntegrationReviewer 发现语义变化、大范围非冲突改动、公共 API/安全/迁移风险或测试缺口，会拒绝并回到 RebaseAgent；必要时要求升级回完整 code-review 或 block。
+
+RebaseAgent 只能解决 rebase/集成冲突，不得 commit、push、finish、创建 PR、merge、approve/reject 或修改 reviewer。它必须同时保留 base/master 新代码和 request 分支实现，不能用粗暴 `ours/theirs` 覆盖来绕过冲突。
+
+同一个 PR 可能多次遇到冲突。框架只在真实冲突发生时追加 `pr-conflicts/attempts/NNN-rebase-conflict.md`，不会为 clean rebase、merged skip 或普通 continue 生成 attempt 文件。这样可以保留冲突历史，又不会让 dashboard 被非冲突刷新记录淹没。
+
+IntegrationReviewer 通过后，再运行:
+
+```bash
+codex-auto-dev finish --request_id REQ-0001 --message "feat: add movement hero support"
+```
+
+这是 PR refresh 后的提交/推送脚本入口。`finish` 会跳过空提交、重新生成 PR body，并 push request 分支；遇到 rebase 后的非快进推送会自动使用 `git push --force-with-lease -u origin <branch>`。`tools/pr-create.sh` 仍负责创建或复用 PR。
+
+如果不是由 RebaseAgent 自动解决，而是人工或外部工具完成了 rebase 冲突处理，可以运行 `codex-auto-dev pr-refresh --request_id REQ-0001 --mode continue`，它会校验 rebase 已完成、没有 unmerged 文件，然后运行 IntegrationReviewer。
 
 ## 升级旧 Workspace
 
@@ -767,7 +879,7 @@ codex-auto-dev upgrade --dry-run
 codex-auto-dev upgrade
 ```
 
-普通 `upgrade` 会刷新 `.example.*` 参考文件，但不会覆盖正式 `tools/*.sh`、`tools/prompts/*.md` 或 review schema。
+普通 `upgrade` 会刷新 `.example.*` 参考文件，但不会覆盖正式 `tools/*.sh`、`tools/prompts/*.md`、review schema 或已经存在的 `agent-journal.md` 历史记录。
 它也会把当前 workspace 写入全局 `workspaces.json`，这样旧项目升级后会出现在 dashboard 中。
 
 如果确认没有自定义 connector、prompt 或 schema，可以运行:

@@ -206,6 +206,21 @@ fn render_dashboard_request_json(request: &Request) -> Result<String> {
                 &finish_kind,
             )?
         },
+        render_dashboard_stage_json(
+            request,
+            "pr-refresh",
+            "PR Refresh",
+            "PR 冲突与刷新记录",
+            &pr_refresh_artifact_path(request),
+            pr_refresh_artifact_content(request),
+            "markdown",
+        )?,
+        render_dashboard_review_stage_json(
+            request,
+            "integration-review",
+            "Integration Review",
+            "集成评审",
+        )?,
     ];
     Ok(format!(
         "        {{\n          \"request_id\": \"{}\",\n          \"external_id\": \"{}\",\n          \"source\": \"{}\",\n          \"title\": \"{}\",\n          \"body\": \"{}\",\n          \"url\": \"{}\",\n          \"status\": \"{}\",\n          \"stage\": \"{}\",\n          \"change_name\": \"{}\",\n          \"change_path\": \"{}\",\n          \"branch\": \"{}\",\n          \"worktree_path\": \"{}\",\n          \"created_at\": \"{}\",\n          \"updated_at\": \"{}\",\n          \"stages\": [\n{}\n          ]\n        }}",
@@ -272,7 +287,7 @@ fn render_dashboard_review_stage_json(
 }
 
 fn dashboard_current_stage(status: &str) -> String {
-    match status {
+    match canonical_status(status) {
         "discovered" | "planning" | "planning-agent-running" | "plan-review-rejected" => {
             "plan".to_string()
         }
@@ -282,7 +297,11 @@ fn dashboard_current_stage(status: &str) -> String {
         | "implementation-agent-running"
         | "code-review-rejected" => "implementation".to_string(),
         "change-doc-submitted" => "code-review".to_string(),
-        "change-doc-approved" | "waiting-finish" | "finished" => "finish-pr".to_string(),
+        "change-doc-approved" | "wait-update-pr" | "wait-finish" | "finished" => {
+            "finish-pr".to_string()
+        }
+        "rebase-agent-running" | "integration-review-rejected" => "pr-refresh".to_string(),
+        "integration-review-submitted" => "integration-review".to_string(),
         "blocked" => "blocked".to_string(),
         _ => "request".to_string(),
     }
@@ -290,12 +309,14 @@ fn dashboard_current_stage(status: &str) -> String {
 
 fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
     let rank = status_progress_rank(&request.status).unwrap_or(0);
+    let has_pr_refresh = dashboard_has_pr_refresh(request);
+    let status = canonical_status(&request.status);
     match stage_id {
         "request" => "done".to_string(),
         "plan" if rank >= 30 => "done".to_string(),
         "plan"
             if matches!(
-                request.status.as_str(),
+                status,
                 "planning" | "planning-agent-running" | "plan-review-rejected"
             ) =>
         {
@@ -303,14 +324,12 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         }
         "plan" => "pending".to_string(),
         "plan-review" if rank >= 40 => "done".to_string(),
-        "plan-review" if matches!(request.status.as_str(), "plan-submitted") => {
-            "active".to_string()
-        }
+        "plan-review" if matches!(status, "plan-submitted") => "active".to_string(),
         "plan-review" => "pending".to_string(),
         "implementation" if rank >= 70 => "done".to_string(),
         "implementation"
             if matches!(
-                request.status.as_str(),
+                status,
                 "plan-approved"
                     | "in-progress"
                     | "implementation-agent-running"
@@ -321,22 +340,78 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         }
         "implementation" => "pending".to_string(),
         "code-review" if rank >= 80 => "done".to_string(),
-        "code-review" if matches!(request.status.as_str(), "change-doc-submitted") => {
+        "code-review" if matches!(status, "change-doc-submitted") => "active".to_string(),
+        "code-review" => "pending".to_string(),
+        "finish-pr" if status == STATUS_FINISHED => "done".to_string(),
+        "finish-pr" if matches!(status, "change-doc-approved" | STATUS_WAIT_UPDATE_PR) => {
             "active".to_string()
         }
-        "code-review" => "pending".to_string(),
-        "finish-pr" if request.status == "finished" => "done".to_string(),
-        "finish-pr"
+        "finish-pr" => "pending".to_string(),
+        "pr-refresh"
+            if has_pr_refresh
+                && matches!(
+                    status,
+                    "integration-review-submitted"
+                        | STATUS_WAIT_UPDATE_PR
+                        | STATUS_WAIT_FINISH
+                        | STATUS_FINISHED
+                ) =>
+        {
+            "done".to_string()
+        }
+        "pr-refresh"
             if matches!(
-                request.status.as_str(),
-                "change-doc-approved" | "waiting-finish"
+                status,
+                "rebase-agent-running" | "integration-review-rejected"
             ) =>
         {
             "active".to_string()
         }
-        "finish-pr" => "pending".to_string(),
+        "pr-refresh" => "pending".to_string(),
+        "integration-review"
+            if has_pr_refresh
+                && matches!(
+                    status,
+                    STATUS_WAIT_UPDATE_PR | STATUS_WAIT_FINISH | STATUS_FINISHED
+                ) =>
+        {
+            "done".to_string()
+        }
+        "integration-review" if matches!(status, "integration-review-submitted") => {
+            "active".to_string()
+        }
+        "integration-review" if status == "integration-review-rejected" => "done".to_string(),
+        "integration-review" => "pending".to_string(),
         _ => "pending".to_string(),
     }
+}
+
+fn dashboard_has_pr_refresh(request: &Request) -> bool {
+    if matches!(
+        canonical_status(&request.status),
+        "rebase-agent-running" | "integration-review-submitted" | "integration-review-rejected"
+    ) {
+        return true;
+    }
+    let pr_status_path = Path::new(".codex-auto-dev")
+        .join("state")
+        .join(format!("{}-pr-status.tsv", request.request_id));
+    if pr_status_path.exists() {
+        return true;
+    }
+    let integration_details =
+        Path::new(&request.change_path).join("reviews/integration-review/details");
+    if integration_details.is_dir() {
+        return true;
+    }
+    let conflict_attempts = Path::new(&request.change_path).join("pr-conflicts/attempts");
+    if conflict_attempts.is_dir() {
+        return true;
+    }
+    let change_doc_path = Path::new(&request.change_path).join("change-doc.md");
+    fs::read_to_string(change_doc_path)
+        .map(|content| content.contains("PR 集成刷新记录") || content.contains("PR 冲突记录"))
+        .unwrap_or(false)
 }
 
 fn request_artifact_path(request: &Request, file: &str) -> String {
@@ -366,6 +441,100 @@ fn finish_artifact_path(request: &Request) -> String {
         return pr_body_path.to_string_lossy().to_string();
     }
     request_artifact_path(request, "status.json")
+}
+
+fn pr_refresh_artifact_path(request: &Request) -> String {
+    if request.change_path.is_empty() {
+        return String::new();
+    }
+    let attempts_dir = pr_conflict_attempts_dir(request);
+    if dashboard_pr_conflict_attempt_files(&attempts_dir)
+        .map(|files| !files.is_empty())
+        .unwrap_or(false)
+    {
+        return attempts_dir.to_string_lossy().to_string();
+    }
+    request_artifact_path(request, "change-doc.md")
+}
+
+fn pr_refresh_artifact_content(request: &Request) -> String {
+    if request.change_path.is_empty() {
+        return String::new();
+    }
+    let attempts_dir = pr_conflict_attempts_dir(request);
+    if let Ok(files) = dashboard_pr_conflict_attempt_files(&attempts_dir) {
+        if !files.is_empty() {
+            return dashboard_pr_conflict_attempt_content(&files);
+        }
+    }
+
+    let change_doc_path = request_artifact_path(request, "change-doc.md");
+    let change_doc = fs::read_to_string(&change_doc_path).unwrap_or_default();
+    let extracted = extract_pr_refresh_sections(&change_doc);
+    if extracted.trim().is_empty() {
+        return String::new();
+    }
+    truncate_dashboard_content(&format!("# PR Refresh 记录\n\n{}", extracted.trim()))
+}
+
+fn pr_conflict_attempts_dir(request: &Request) -> PathBuf {
+    Path::new(&request.change_path)
+        .join("pr-conflicts")
+        .join("attempts")
+}
+
+fn dashboard_pr_conflict_attempt_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("md") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn dashboard_pr_conflict_attempt_content(files: &[PathBuf]) -> String {
+    let mut content = String::from("# PR Refresh 冲突记录\n\n");
+    content.push_str("这里按发生顺序展示 `pr-refresh` 过程中真实产生的 rebase 冲突 attempt。clean rebase 不会生成冲突 attempt。\n");
+    for path in files {
+        let display_path = path.to_string_lossy();
+        content.push_str("\n---\n\n");
+        content.push_str(&format!("> 来源: `{}`\n\n", markdown_inline(&display_path)));
+        match fs::read_to_string(path) {
+            Ok(record) => content.push_str(record.trim_end()),
+            Err(error) => content.push_str(&format!(
+                "无法读取冲突记录 `{}`: {}",
+                markdown_inline(&display_path),
+                markdown_inline(&error.to_string())
+            )),
+        }
+        content.push('\n');
+    }
+    truncate_dashboard_content(&content)
+}
+
+fn extract_pr_refresh_sections(content: &str) -> String {
+    let mut extracted = String::new();
+    let mut include = false;
+    for line in content.lines() {
+        if line.starts_with("## ") {
+            include = line.starts_with("## PR 集成刷新记录") || line.starts_with("## PR 冲突记录");
+        }
+        if include {
+            extracted.push_str(line);
+            extracted.push('\n');
+        }
+    }
+    extracted
 }
 
 fn dashboard_request_content(request: &Request) -> String {

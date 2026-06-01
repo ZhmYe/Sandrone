@@ -11,7 +11,9 @@ mod utils;
 pub(crate) use defaults::*;
 pub(crate) use delivery::deliver_finished_request;
 pub(crate) use doctor::doctor;
-pub(crate) use review_gate::{code_review, plan_review, review_diagnostic_excerpt};
+pub(crate) use review_gate::{
+    code_review, integration_review, plan_review, review_diagnostic_excerpt,
+};
 pub(crate) use state::*;
 pub(crate) use utils::*;
 
@@ -37,34 +39,49 @@ const DEV_REPO: &str = "dev/repo";
 const WORKTREES: &str = "dev/worktrees";
 const ISSUE_TOOL: &str = "tools/issue-update.sh";
 const ISSUE_AGENT_TOOL: &str = "tools/issue-agent.sh";
+const REBASE_AGENT_TOOL: &str = "tools/rebase-agent.sh";
 const PR_TOOL: &str = "tools/pr-create.sh";
+const PR_STATUS_TOOL: &str = "tools/pr-status.sh";
 const PLAN_REVIEW_TOOL: &str = "tools/plan-review.sh";
 const TEST_REVIEW_TOOL: &str = "tools/test-review.sh";
 const DESIGN_REVIEW_TOOL: &str = "tools/design-review.sh";
+const INTEGRATION_REVIEW_TOOL: &str = "tools/integration-review.sh";
 const ISSUE_AGENT_PROMPT: &str = "tools/prompts/issue-agent.md";
 const PLAN_AGENT_PROMPT: &str = "tools/prompts/plan-agent.md";
 const IMPLEMENTATION_AGENT_PROMPT: &str = "tools/prompts/implementation-agent.md";
+const REBASE_AGENT_PROMPT: &str = "tools/prompts/rebase-agent.md";
 const PLAN_REVIEW_PROMPT: &str = "tools/prompts/plan-reviewer.md";
 const TEST_REVIEW_PROMPT: &str = "tools/prompts/test-reviewer.md";
 const DESIGN_REVIEW_PROMPT: &str = "tools/prompts/design-reviewer.md";
+const INTEGRATION_REVIEW_PROMPT: &str = "tools/prompts/integration-reviewer.md";
 const REVIEW_SCHEMA: &str = "tools/schemas/review-result.schema.json";
 const ISSUE_TOOL_EXAMPLE: &str = "tools/issue-update.example.sh";
 const ISSUE_AGENT_TOOL_EXAMPLE: &str = "tools/issue-agent.example.sh";
+const REBASE_AGENT_TOOL_EXAMPLE: &str = "tools/rebase-agent.example.sh";
 const PR_TOOL_EXAMPLE: &str = "tools/pr-create.example.sh";
+const PR_STATUS_TOOL_EXAMPLE: &str = "tools/pr-status.example.sh";
 const PLAN_REVIEW_TOOL_EXAMPLE: &str = "tools/plan-review.example.sh";
 const TEST_REVIEW_TOOL_EXAMPLE: &str = "tools/test-review.example.sh";
 const DESIGN_REVIEW_TOOL_EXAMPLE: &str = "tools/design-review.example.sh";
+const INTEGRATION_REVIEW_TOOL_EXAMPLE: &str = "tools/integration-review.example.sh";
 const ISSUE_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/issue-agent.example.md";
 const PLAN_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/plan-agent.example.md";
 const IMPLEMENTATION_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/implementation-agent.example.md";
+const REBASE_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/rebase-agent.example.md";
 const PLAN_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/plan-reviewer.example.md";
 const TEST_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/test-reviewer.example.md";
 const DESIGN_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/design-reviewer.example.md";
+const INTEGRATION_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/integration-reviewer.example.md";
 const REVIEW_SCHEMA_EXAMPLE: &str = "tools/schemas/review-result.example.schema.json";
 const WORKFLOW_SKILL: &str = "skills/codex-auto-dev-workflow/SKILL.md";
 const WORKFLOW_SKILL_CONTENT: &str = include_str!("../skills/codex-auto-dev-workflow/SKILL.md");
 const DEFAULT_DASHBOARD_HOST: &str = "127.0.0.1";
 const DEFAULT_DASHBOARD_PORT: u16 = 47217;
+const STATUS_WAIT_UPDATE_PR: &str = "wait-update-pr";
+const STATUS_WAIT_FINISH: &str = "wait-finish";
+const STATUS_FINISHED: &str = "finished";
+const LEGACY_WAITING_FINISH: &str = "waiting-finish";
+const LEGACY_PR_PENDING: &str = "pr-pending";
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -125,14 +142,42 @@ struct PlanPreflight {
     notes: Vec<String>,
 }
 
+struct IntegrationRecord<'a> {
+    mode: &'a str,
+    base_branch: &'a str,
+    base_ref: &'a str,
+    before_head: &'a str,
+    after_head: &'a str,
+    pr_status: &'a str,
+    detail: &'a str,
+}
+
+#[derive(Clone, Debug)]
+struct PrStatusReport {
+    status: String,
+    url: String,
+    detail: String,
+    raw: String,
+}
+
 #[derive(Clone, Debug)]
 struct DeliveryResult {
     commit_message: String,
     branch: String,
+    committed: bool,
+    pushed_with_force_lease: bool,
     pr_url: Option<String>,
     pr_status: String,
     compare_url: Option<String>,
     pr_error: String,
+}
+
+fn canonical_status(status: &str) -> &str {
+    match status {
+        LEGACY_WAITING_FINISH => STATUS_WAIT_UPDATE_PR,
+        LEGACY_PR_PENDING => STATUS_WAIT_FINISH,
+        _ => status,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,6 +253,7 @@ struct ReviewFinding {
 enum AgentPhase {
     Planning,
     Implementation,
+    Rebase,
 }
 
 impl AgentPhase {
@@ -215,6 +261,7 @@ impl AgentPhase {
         match self {
             AgentPhase::Planning => "planning",
             AgentPhase::Implementation => "implementation",
+            AgentPhase::Rebase => "rebase",
         }
     }
 
@@ -222,6 +269,7 @@ impl AgentPhase {
         match self {
             AgentPhase::Planning => "planning-agent-running",
             AgentPhase::Implementation => "implementation-agent-running",
+            AgentPhase::Rebase => "rebase-agent-running",
         }
     }
 
@@ -229,6 +277,14 @@ impl AgentPhase {
         match self {
             AgentPhase::Planning => PLAN_AGENT_PROMPT,
             AgentPhase::Implementation => IMPLEMENTATION_AGENT_PROMPT,
+            AgentPhase::Rebase => REBASE_AGENT_PROMPT,
+        }
+    }
+
+    fn tool_path(self) -> &'static str {
+        match self {
+            AgentPhase::Planning | AgentPhase::Implementation => ISSUE_AGENT_TOOL,
+            AgentPhase::Rebase => REBASE_AGENT_TOOL,
         }
     }
 }
@@ -258,8 +314,11 @@ fn run() -> Result<()> {
         "approvals" => show_approvals(&args),
         "plan-review" => plan_review(&args),
         "code-review" => code_review(&args),
+        "integration-review" => integration_review(&args),
         "start" => start_worktree(&args),
         "finish" => finish_request(&args),
+        "pr-status" => pr_status_request(&args),
+        "pr-refresh" => pr_refresh_request(&args),
         "block" => block_request(&args),
         "resume" => resume_request(&args),
         "session" => register_session(&args),
@@ -332,6 +391,7 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     write_default_issue_tool()?;
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
+    write_default_pr_status_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
     write_default_workflow_skill()?;
@@ -401,6 +461,7 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     write_default_issue_tool()?;
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
+    write_default_pr_status_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
     write_default_workflow_skill()?;
@@ -957,25 +1018,74 @@ fn finish_request(args: &[String]) -> Result<()> {
     let index = find_request_index(&requests, &request_id)
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
+    if matches!(
+        canonical_status(&request.status),
+        STATUS_WAIT_FINISH | STATUS_FINISHED
+    ) {
+        let report = run_delivery_pr_status_check(&mut requests, index, &mut request)?;
+        print_pr_status_result(&request, &report);
+        return Ok(());
+    }
     ensure_gate_approved(&request, "change-doc")?;
     let commit_message = commit_message.unwrap_or_else(|| default_commit_message(&request));
     validate_commit_message(&commit_message)?;
     let delivery = deliver_finished_request(&request, &commit_message)?;
-    request.status = "finished".to_string();
+    let next_status = if delivery.pr_url.is_some() {
+        STATUS_WAIT_FINISH
+    } else {
+        STATUS_WAIT_UPDATE_PR
+    };
+    request.status = next_status.to_string();
     request.updated_at = now_string();
     let change_path = request.change_path.clone();
     let worktree_path = request.worktree_path.clone();
     let branch = request.branch.clone();
     requests[index] = request.clone();
     save_requests(&requests)?;
-    upsert_session_for_request(&request, "implementation", "finished")?;
+    write_status_json(
+        &request,
+        "delivery",
+        next_status,
+        if delivery.pr_url.is_some() {
+            "PR created or reused; waiting for merge check"
+        } else {
+            "PR creation failed or skipped; waiting for PR creation/update retry"
+        },
+    )?;
+    append_event(
+        "finish_delivery",
+        &request.request_id,
+        "delivery",
+        next_status,
+        if delivery.pr_url.is_some() {
+            "PR created or reused; waiting for merge check"
+        } else {
+            "PR creation failed or skipped"
+        },
+    )?;
+    upsert_session_for_request(&request, "implementation", next_status)?;
 
-    println!("{request_id} marked finished.");
+    if next_status == STATUS_WAIT_FINISH {
+        println!("{request_id} marked wait-finish.");
+    } else {
+        println!("{request_id} remains wait-update-pr.");
+    }
     println!("  change doc: {change_path}/change-doc.md");
     println!("  worktree: {worktree_path}");
     println!("  branch: {branch}");
-    println!("  committed: {}", delivery.commit_message);
-    println!("  pushed branch: {}", delivery.branch);
+    if delivery.committed {
+        println!("  committed: {}", delivery.commit_message);
+    } else {
+        println!("  no new commit: worktree had no file changes");
+    }
+    if delivery.pushed_with_force_lease {
+        println!(
+            "  pushed branch with --force-with-lease: {}",
+            delivery.branch
+        );
+    } else {
+        println!("  pushed branch: {}", delivery.branch);
+    }
     if let Some(pr_url) = delivery.pr_url {
         if delivery.pr_status == "existing" {
             println!("  PR already exists: {pr_url}");
@@ -992,6 +1102,558 @@ fn finish_request(args: &[String]) -> Result<()> {
         println!("  PR creation skipped: {}", delivery.pr_error);
     }
     Ok(())
+}
+
+fn pr_status_request(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, &request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    let report = run_delivery_pr_status_check(&mut requests, index, &mut request)?;
+    print_pr_status_result(&request, &report);
+    Ok(())
+}
+
+fn run_delivery_pr_status_check(
+    requests: &mut [Request],
+    index: usize,
+    request: &mut Request,
+) -> Result<PrStatusReport> {
+    ensure_refreshable_request(request)?;
+    let config = load_config()?;
+    let report = run_pr_status_tool(request, &config)?;
+    let (next_status, reason) = if report.status == "merged" {
+        (
+            STATUS_FINISHED.to_string(),
+            format!(
+                "PR status confirmed merged by {PR_STATUS_TOOL}: {}",
+                report.raw
+            ),
+        )
+    } else if report.status == "open" {
+        (
+            STATUS_WAIT_FINISH.to_string(),
+            format!("PR status is open; waiting for merge: {}", report.raw),
+        )
+    } else if matches!(report.status.as_str(), "missing" | "closed") {
+        (
+            STATUS_WAIT_UPDATE_PR.to_string(),
+            format!(
+                "PR status is {}; PR needs creation or update: {}",
+                report.status, report.raw
+            ),
+        )
+    } else {
+        (
+            request.status.clone(),
+            format!(
+                "PR status could not confirm merge; keeping current state: {}",
+                report.raw
+            ),
+        )
+    };
+    if request.status != next_status {
+        request.status = next_status.clone();
+        request.updated_at = now_string();
+        requests[index] = request.clone();
+        save_requests(requests)?;
+        write_status_json(request, "delivery", &next_status, &reason)?;
+        append_event(
+            "pr_status_checked",
+            &request.request_id,
+            "delivery",
+            &next_status,
+            &reason,
+        )?;
+        upsert_session_for_request(request, "implementation", &next_status)?;
+    } else {
+        append_event(
+            "pr_status_checked",
+            &request.request_id,
+            "delivery",
+            &request.status,
+            &reason,
+        )?;
+    }
+    Ok(report)
+}
+
+fn print_pr_status_result(request: &Request, report: &PrStatusReport) {
+    println!("PR status for {}: {}", request.request_id, report.status);
+    if !report.url.trim().is_empty() {
+        println!("  url: {}", report.url);
+    }
+    if !report.detail.trim().is_empty() {
+        println!("  detail: {}", report.detail);
+    }
+    println!("  request status: {}", request.status);
+    if request.status == STATUS_FINISHED {
+        println!("  merged PR confirmed; request marked finished.");
+    } else if request.status == STATUS_WAIT_FINISH {
+        println!("  PR is not merged yet; request remains wait-finish.");
+    } else if request.status == STATUS_WAIT_UPDATE_PR {
+        println!("  PR needs creation or update; request remains wait-update-pr.");
+    } else {
+        println!("  PR merge was not confirmed; request state was not promoted.");
+    }
+}
+
+fn pr_refresh_request(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(
+        args,
+        &["--request_id", "--request-id", "--mode", "--max-attempts"],
+    )?;
+    let request_id = required_request_id(args)?;
+    let mode = flag_value(args, "--mode")?.unwrap_or_else(|| "start".to_string());
+    let max_attempts = parse_max_attempts(flag_value(args, "--max-attempts")?)?;
+    let Some(_lock) = RequestLock::acquire(&request_id)? else {
+        println!("PR refresh skipped for {request_id}: request lock is already held.");
+        return Ok(());
+    };
+
+    match mode.as_str() {
+        "start" => start_pr_refresh(&request_id, max_attempts),
+        "continue" => continue_pr_refresh(&request_id),
+        _ => Err("--mode must be `start` or `continue`".into()),
+    }
+}
+
+fn start_pr_refresh(request_id: &str, max_attempts: u32) -> Result<()> {
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    ensure_refreshable_request(&request)?;
+    ensure_gate_approved(&request, "change-doc")?;
+    if review_attempts_exhausted(&request, AgentPhase::Rebase, max_attempts)? {
+        let reason = format!(
+            "integration-review failed after {max_attempts} attempt(s); manual recovery is required"
+        );
+        mark_blocked(&mut requests, index, &mut request, "rebase", &reason)?;
+        return Err(reason.into());
+    }
+
+    let config = load_config()?;
+    let pr_status = run_pr_status_tool(&request, &config)?;
+    if pr_status.status == "merged" {
+        request.status = STATUS_FINISHED.to_string();
+        request.updated_at = now_string();
+        requests[index] = request.clone();
+        save_requests(&requests)?;
+        write_status_json(
+            &request,
+            "delivery",
+            STATUS_FINISHED,
+            &format!(
+                "PR already merged before refresh; confirmed by {PR_STATUS_TOOL}: {}",
+                pr_status.raw
+            ),
+        )?;
+        append_event(
+            "pr_refresh_skipped_merged",
+            &request.request_id,
+            "delivery",
+            STATUS_FINISHED,
+            &pr_status.raw,
+        )?;
+        upsert_session_for_request(&request, "implementation", STATUS_FINISHED)?;
+        println!("PR refresh skipped for {request_id}: PR is already merged.");
+        if !pr_status.url.trim().is_empty() {
+            println!("  url: {}", pr_status.url);
+        }
+        return Ok(());
+    }
+    let worktree = Path::new(&request.worktree_path);
+    ensure_clean_worktree_for_rebase(worktree)?;
+    let base_ref = fetch_base_ref(worktree, &config.base_branch)?;
+    let before_head = git_output(&request.worktree_path, &["rev-parse", "HEAD"])?;
+    let before_patch = integration_patch_stat(&request.worktree_path, &base_ref);
+    let output = Command::new("git")
+        .args(["rebase", &base_ref])
+        .current_dir(worktree)
+        .envs(proxy_env())
+        .output()?;
+
+    if output.status.success() {
+        let after_head = git_output(&request.worktree_path, &["rev-parse", "HEAD"])?;
+        let after_patch = integration_patch_stat(&request.worktree_path, &base_ref);
+        let detail = format!(
+            "Clean rebase completed without conflicts.\n\nBefore patch stat:\n{}\n\nAfter patch stat:\n{}",
+            before_patch, after_patch
+        );
+        append_integration_record(
+            &request,
+            &IntegrationRecord {
+                mode: "clean-rebase",
+                base_branch: &config.base_branch,
+                base_ref: &base_ref,
+                before_head: &before_head,
+                after_head: &after_head,
+                pr_status: &pr_status.raw,
+                detail: &detail,
+            },
+        )?;
+        mark_integration_review_submitted(
+            &mut requests,
+            index,
+            &mut request,
+            "clean rebase completed",
+        )?;
+        println!("PR refresh clean rebase completed for {request_id}.");
+        run_integration_review_from_tick(request_id)?;
+        println!("Integration review completed for {request_id}.");
+        Ok(())
+    } else {
+        let detail = review_diagnostic_excerpt(&format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+        let record_detail = format!(
+            "Rebase stopped with conflicts or another integration error.\n\nDiagnostic: {detail}\n\nRebaseAgent must preserve both base/master changes and request branch changes."
+        );
+        let attempt = append_pr_conflict_record(
+            &request,
+            &IntegrationRecord {
+                mode: "conflict-rebase",
+                base_branch: &config.base_branch,
+                base_ref: &base_ref,
+                before_head: &before_head,
+                after_head: &before_head,
+                pr_status: &pr_status.raw,
+                detail: &record_detail,
+            },
+        )?;
+        request.status = AgentPhase::Rebase.running_status().to_string();
+        request.updated_at = now_string();
+        requests[index] = request.clone();
+        save_requests(&requests)?;
+        write_status_json(
+            &request,
+            "rebase",
+            AgentPhase::Rebase.running_status(),
+            &detail,
+        )?;
+        upsert_session_for_request(&request, "rebase", AgentPhase::Rebase.running_status())?;
+        let pid = spawn_issue_agent(&request, max_attempts, AgentPhase::Rebase)?;
+        append_event(
+            "rebase_agent_dispatched",
+            &request.request_id,
+            "rebase",
+            AgentPhase::Rebase.running_status(),
+            &format!("pid={pid}; base_ref={base_ref}; detail={detail}"),
+        )?;
+        println!("PR refresh rebase conflict for {request_id}.");
+        println!("  conflict record: {attempt:03}");
+        println!("  rebase-agent pid: {pid}");
+        println!("  worktree: {}", request.worktree_path);
+        println!(
+            "  logs: {} | {}",
+            agent_stdout_path(request_id).display(),
+            agent_stderr_path(request_id).display()
+        );
+        Ok(())
+    }
+}
+
+fn continue_pr_refresh(request_id: &str) -> Result<()> {
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    ensure_refreshable_request(&request)?;
+    ensure_rebase_ready_for_integration_review(&request)?;
+    append_integration_record(
+        &request,
+        &IntegrationRecord {
+            mode: "manual-continue",
+            base_branch: "",
+            base_ref: "",
+            before_head: "",
+            after_head: "",
+            pr_status: "manual continue",
+            detail: "Manual or external rebase conflict resolution completed; running IntegrationReviewer.",
+        },
+    )?;
+    mark_integration_review_submitted(
+        &mut requests,
+        index,
+        &mut request,
+        "manual pr-refresh continue",
+    )?;
+    run_integration_review_from_tick(request_id)?;
+    println!("PR refresh continue completed for {request_id}.");
+    Ok(())
+}
+
+fn ensure_refreshable_request(request: &Request) -> Result<()> {
+    ensure_change_packet(request)?;
+    ensure_gate_approved(request, "plan")?;
+    if request.worktree_path.trim().is_empty() {
+        return Err(format!(
+            "{} has no worktree. Run codex-auto-dev start first.",
+            request.request_id
+        )
+        .into());
+    }
+    if request.branch.trim().is_empty() {
+        return Err(format!(
+            "{} has no branch. Run codex-auto-dev start first.",
+            request.request_id
+        )
+        .into());
+    }
+    if !Path::new(&request.worktree_path).exists() {
+        return Err(format!("worktree does not exist: {}", request.worktree_path).into());
+    }
+    Ok(())
+}
+
+fn ensure_clean_worktree_for_rebase(worktree: &Path) -> Result<()> {
+    let worktree_string = worktree.to_string_lossy().to_string();
+    let changes = git_output(&worktree_string, &["status", "--porcelain"])?;
+    if !changes.trim().is_empty() {
+        return Err(format!(
+            "worktree must be clean before pr-refresh rebase. Commit, discard, or resolve changes first:\n{changes}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn fetch_base_ref(worktree: &Path, base_branch: &str) -> Result<String> {
+    run_command(
+        Command::new("git")
+            .args(["fetch", "origin", base_branch])
+            .current_dir(worktree)
+            .envs(proxy_env()),
+    )?;
+    let remote_ref = format!("origin/{base_branch}");
+    let worktree_string = worktree.to_string_lossy().to_string();
+    if git_output(&worktree_string, &["rev-parse", "--verify", &remote_ref]).is_ok() {
+        Ok(remote_ref)
+    } else {
+        Ok(base_branch.to_string())
+    }
+}
+
+fn integration_patch_stat(worktree: &str, base_ref: &str) -> String {
+    git_output(worktree, &["diff", "--stat", &format!("{base_ref}...HEAD")])
+        .unwrap_or_else(|error| format!("unable to compute patch stat: {error}"))
+}
+
+fn run_pr_status_tool(request: &Request, config: &Config) -> Result<PrStatusReport> {
+    if !Path::new(PR_STATUS_TOOL).exists() {
+        let raw = format!("unknown\t\t{PR_STATUS_TOOL} missing");
+        return Ok(parse_pr_status_report(&raw));
+    }
+    let compare_url = github_compare_url(&config.git_url, &config.base_branch, &request.branch)
+        .unwrap_or_default();
+    let output = Command::new("sh")
+        .arg(PR_STATUS_TOOL)
+        .current_dir(".")
+        .env("CODEX_AUTO_DEV_REQUEST_ID", &request.request_id)
+        .env("CODEX_AUTO_DEV_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("CODEX_AUTO_DEV_REQUEST_SOURCE", &request.source)
+        .env("CODEX_AUTO_DEV_REQUEST_TITLE", &request.title)
+        .env("CODEX_AUTO_DEV_REQUEST_URL", &request.url)
+        .env("CODEX_AUTO_DEV_CHANGE_PATH", &request.change_path)
+        .env("CODEX_AUTO_DEV_WORKTREE", &request.worktree_path)
+        .env("CODEX_AUTO_DEV_PR_BASE", &config.base_branch)
+        .env("CODEX_AUTO_DEV_PR_HEAD", &request.branch)
+        .env("CODEX_AUTO_DEV_PR_COMPARE_URL", compare_url)
+        .envs(proxy_env())
+        .output();
+    let status_path = Path::new(".codex-auto-dev")
+        .join("state")
+        .join(format!("{}-pr-status.tsv", request.request_id));
+    let status = match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8(output.stdout)?;
+            stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("unknown\t\tpr-status returned no output")
+                .to_string()
+        }
+        Ok(output) => format!(
+            "unknown\t\t{}",
+            review_diagnostic_excerpt(&String::from_utf8_lossy(&output.stderr))
+        ),
+        Err(error) => format!("unknown\t\t{error}"),
+    };
+    fs::write(status_path, ensure_trailing_newline(&status))?;
+    Ok(parse_pr_status_report(&status))
+}
+
+fn parse_pr_status_report(line: &str) -> PrStatusReport {
+    let fields: Vec<&str> = line.split('\t').collect();
+    PrStatusReport {
+        status: fields
+            .first()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "unknown".to_string()),
+        url: fields
+            .get(1)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        detail: fields
+            .get(2)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        raw: line.trim().to_string(),
+    }
+}
+
+fn append_integration_record(request: &Request, record: &IntegrationRecord<'_>) -> Result<()> {
+    let timestamp = now_string();
+    let path = Path::new(&request.change_path).join("change-doc.md");
+    let mut content = fs::read_to_string(&path)?;
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(&format!(
+        "\n## PR 集成刷新记录\n\n- 时间: `{}`\n- 模式: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- Rebase 后 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n### 集成处理要求\n\n- RebaseAgent 和 IntegrationReviewer 必须确认冲突解决保留 base/master 新代码，也保留 request 分支已通过 review 的实现语义。\n- 不能为了自己分支的修改删除 base/master 新代码；如果必须替换，需要在本节写明原因、影响和验证证据。\n\n### 集成细节\n\n{}\n",
+        timestamp,
+        markdown_inline(record.mode),
+        markdown_inline(record.base_branch),
+        markdown_inline(record.base_ref),
+        markdown_inline(record.before_head),
+        markdown_inline(record.after_head),
+        markdown_inline(record.pr_status),
+        record.detail.trim_end(),
+    ));
+    fs::write(path, content)?;
+    Ok(())
+}
+
+fn append_pr_conflict_record(request: &Request, record: &IntegrationRecord<'_>) -> Result<u32> {
+    let timestamp = now_string();
+    let attempt = next_pr_conflict_attempt(request)?;
+    let attempt_path = pr_conflict_attempt_path(request, attempt);
+    if let Some(parent) = attempt_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let detail = record.detail.trim_end();
+    let record_content = format!(
+        "# PR 冲突记录 Attempt {attempt:03}\n\n- Request ID: `{}`\n- 时间: `{}`\n- 模式: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n## 冲突诊断\n\n{}\n\n## 处理约束\n\n- RebaseAgent 必须同时保留 base/master 新代码和 request 分支已通过 review 的实现语义。\n- 不得为了消除冲突直接删除 master 上的新代码；如确需替换，必须说明原因、影响和验证证据。\n- 冲突解决后必须通过 IntegrationReviewer，并在 `change-doc.md` 中记录解决方式、实现前后对比和验证结果。\n",
+        request.request_id,
+        timestamp,
+        markdown_inline(record.mode),
+        markdown_inline(record.base_branch),
+        markdown_inline(record.base_ref),
+        markdown_inline(record.before_head),
+        markdown_inline(record.pr_status),
+        detail,
+    );
+    fs::write(&attempt_path, record_content)?;
+
+    let change_doc_path = Path::new(&request.change_path).join("change-doc.md");
+    let mut change_doc = fs::read_to_string(&change_doc_path)?;
+    if !change_doc.ends_with('\n') {
+        change_doc.push('\n');
+    }
+    change_doc.push_str(&format!(
+        "\n## PR 冲突记录 (Attempt {attempt:03})\n\n- 冲突记录: `{}`\n- 时间: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n### 冲突诊断\n\n{}\n",
+        markdown_inline(&attempt_path.to_string_lossy()),
+        timestamp,
+        markdown_inline(record.base_branch),
+        markdown_inline(record.base_ref),
+        markdown_inline(record.before_head),
+        markdown_inline(record.pr_status),
+        detail,
+    ));
+    fs::write(change_doc_path, change_doc)?;
+    Ok(attempt)
+}
+
+fn next_pr_conflict_attempt(request: &Request) -> Result<u32> {
+    let dir = pr_conflict_attempts_dir(request);
+    if !dir.exists() {
+        return Ok(1);
+    }
+    let mut max_attempt = 0u32;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let filename = entry.file_name().to_string_lossy().to_string();
+        let Some((attempt_text, _rest)) = filename.split_once('-') else {
+            continue;
+        };
+        let Ok(attempt) = attempt_text.parse::<u32>() else {
+            continue;
+        };
+        max_attempt = max_attempt.max(attempt);
+    }
+    Ok(max_attempt + 1)
+}
+
+fn pr_conflict_attempts_dir(request: &Request) -> PathBuf {
+    Path::new(&request.change_path)
+        .join("pr-conflicts")
+        .join("attempts")
+}
+
+fn pr_conflict_attempt_path(request: &Request, attempt: u32) -> PathBuf {
+    pr_conflict_attempts_dir(request).join(format!("{attempt:03}-rebase-conflict.md"))
+}
+
+fn mark_integration_review_submitted(
+    requests: &mut [Request],
+    index: usize,
+    request: &mut Request,
+    reason: &str,
+) -> Result<()> {
+    request.status = "integration-review-submitted".to_string();
+    request.updated_at = now_string();
+    requests[index] = request.clone();
+    save_requests(requests)?;
+    write_status_json(request, "rebase", "integration-review-submitted", reason)?;
+    append_event(
+        "integration_review_submitted",
+        &request.request_id,
+        "rebase",
+        "integration-review-submitted",
+        reason,
+    )?;
+    upsert_session_for_request(request, "rebase", "waiting-review")
+}
+
+fn ensure_rebase_ready_for_integration_review(request: &Request) -> Result<()> {
+    if git_internal_path(&request.worktree_path, "rebase-merge").exists()
+        || git_internal_path(&request.worktree_path, "rebase-apply").exists()
+    {
+        return Err(
+            "rebase is still in progress; complete or abort it before integration-review".into(),
+        );
+    }
+    let unmerged = git_output(
+        &request.worktree_path,
+        &["diff", "--name-only", "--diff-filter=U"],
+    )?;
+    if !unmerged.trim().is_empty() {
+        return Err(format!("unmerged conflict files remain:\n{unmerged}").into());
+    }
+    Ok(())
+}
+
+fn git_internal_path(worktree: &str, name: &str) -> PathBuf {
+    let path = git_output(worktree, &["rev-parse", "--git-path", name])
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| Path::new(".git").join(name));
+    if path.is_absolute() {
+        path
+    } else {
+        Path::new(worktree).join(path)
+    }
 }
 
 fn block_request(args: &[String]) -> Result<()> {
@@ -1026,7 +1688,12 @@ fn resume_request(args: &[String]) -> Result<()> {
     let mut request = requests[index].clone();
     ensure_change_packet(&request)?;
     let resumed_phase = if request.status == "blocked" {
-        let phase = if ensure_gate_approved(&request, "plan").is_ok() {
+        let blocked_stage = fs::read_to_string(Path::new(&request.change_path).join("status.json"))
+            .ok()
+            .and_then(|content| json_value(&content, "stage"));
+        let phase = if blocked_stage.as_deref() == Some("rebase") {
+            AgentPhase::Rebase
+        } else if ensure_gate_approved(&request, "plan").is_ok() {
             AgentPhase::Implementation
         } else {
             AgentPhase::Planning
@@ -1034,6 +1701,7 @@ fn resume_request(args: &[String]) -> Result<()> {
         let status = match phase {
             AgentPhase::Planning => "planning",
             AgentPhase::Implementation => "in-progress",
+            AgentPhase::Rebase => "integration-review-rejected",
         };
         request.status = status.to_string();
         request.updated_at = now_string();
@@ -1399,13 +2067,19 @@ fn select_tick_requests(requests: &[Request], request_id: Option<&str>) -> Resul
 }
 
 fn is_terminal_status(status: &str) -> bool {
-    matches!(status, "finished" | "waiting-finish" | "blocked")
+    matches!(
+        canonical_status(status),
+        STATUS_FINISHED | STATUS_WAIT_FINISH | STATUS_WAIT_UPDATE_PR | "blocked"
+    )
 }
 
 fn is_agent_running_status(status: &str) -> bool {
     matches!(
         status,
-        "agent-running" | "planning-agent-running" | "implementation-agent-running"
+        "agent-running"
+            | "planning-agent-running"
+            | "implementation-agent-running"
+            | "rebase-agent-running"
     )
 }
 
@@ -1449,7 +2123,8 @@ fn sync_request_from_status_json(requests: &mut [Request], index: usize) -> Resu
     if runtime_request_id != request.request_id {
         return Ok(false);
     }
-    let runtime_status = json_value(&content, "status").unwrap_or_default();
+    let runtime_status =
+        canonical_status(&json_value(&content, "status").unwrap_or_default()).to_string();
     if runtime_status.trim().is_empty() || status_progress_rank(&runtime_status).is_none() {
         return Ok(false);
     }
@@ -1499,7 +2174,7 @@ fn should_sync_runtime_status(central_status: &str, runtime_status: &str) -> boo
 }
 
 fn status_progress_rank(status: &str) -> Option<u8> {
-    match status {
+    match canonical_status(status) {
         "discovered" => Some(1),
         "planning" => Some(10),
         "planning-agent-running" | "agent-running" => Some(20),
@@ -1511,8 +2186,12 @@ fn status_progress_rank(status: &str) -> Option<u8> {
         "change-doc-submitted" => Some(70),
         "code-review-rejected" => Some(75),
         "change-doc-approved" => Some(80),
-        "waiting-finish" => Some(90),
-        "finished" => Some(100),
+        "integration-review-submitted" => Some(82),
+        "integration-review-rejected" => Some(84),
+        "rebase-agent-running" => Some(86),
+        STATUS_WAIT_UPDATE_PR => Some(90),
+        STATUS_WAIT_FINISH => Some(95),
+        STATUS_FINISHED => Some(100),
         "blocked" => Some(110),
         _ => None,
     }
@@ -1618,7 +2297,10 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
     }
 
     if ensure_gate_approved(&request, "change-doc").is_ok() {
-        mark_waiting_finish_by_id(&request.request_id)?;
+        mark_wait_update_pr_by_id(
+            &request.request_id,
+            "change-doc approval is valid; waiting for PR creation or update",
+        )?;
         return Ok(true);
     }
 
@@ -1627,6 +2309,8 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
         "change-doc-submitted" => run_code_review_from_tick(&request.request_id),
         "planning-agent-running" => refresh_agent_phase(&request, AgentPhase::Planning),
         "implementation-agent-running" => refresh_agent_phase(&request, AgentPhase::Implementation),
+        "rebase-agent-running" => refresh_agent_phase(&request, AgentPhase::Rebase),
+        "integration-review-submitted" => run_integration_review_from_tick(&request.request_id),
         "agent-running" => refresh_legacy_agent_status(&request),
         _ => Ok(false),
     }
@@ -1637,10 +2321,6 @@ fn dispatch_next_agent_for_request(
     max_attempts: u32,
     preflight: &mut Option<PlanPreflight>,
 ) -> Result<Option<(Request, AgentPhase, u32)>> {
-    if !Path::new(ISSUE_AGENT_TOOL).exists() {
-        return Err(format!("{ISSUE_AGENT_TOOL} does not exist").into());
-    }
-
     let mut requests = load_requests()?;
     let Some(mut index) = find_request_index(&requests, request_id) else {
         return Err(format!("unknown request_id: {request_id}").into());
@@ -1679,6 +2359,9 @@ fn dispatch_next_agent_for_request(
     let Some(phase) = next_agent_phase(&request)? else {
         return Ok(None);
     };
+    if !Path::new(phase.tool_path()).exists() {
+        return Err(format!("{} does not exist", phase.tool_path()).into());
+    }
     if review_attempts_exhausted(&request, phase, max_attempts)? {
         let stage = phase.as_str();
         let reason = format!(
@@ -1693,6 +2376,8 @@ fn dispatch_next_agent_for_request(
         index = find_request_index(&requests, request_id)
             .ok_or_else(|| format!("selected request disappeared after start: {request_id}"))?;
         request = requests[index].clone();
+    } else if phase == AgentPhase::Rebase && request.worktree_path.trim().is_empty() {
+        return Err(format!("{} has no worktree for rebase agent", request.request_id).into());
     }
 
     let phase_name = phase.as_str();
@@ -1745,6 +2430,9 @@ fn next_agent_phase(request: &Request) -> Result<Option<AgentPhase>> {
     if request.status == "plan-review-rejected" {
         return Ok(Some(AgentPhase::Planning));
     }
+    if request.status == "integration-review-rejected" {
+        return Ok(Some(AgentPhase::Rebase));
+    }
     if ensure_gate_approved(request, "plan").is_err() {
         return Ok(Some(AgentPhase::Planning));
     }
@@ -1762,12 +2450,13 @@ fn review_attempts_exhausted(
     let stage = match phase {
         AgentPhase::Planning => "plan-review",
         AgentPhase::Implementation => "code-review",
+        AgentPhase::Rebase => "integration-review",
     };
     let attempts = review_attempt_count(request, stage)?;
     Ok(attempts >= max_attempts
         && matches!(
             request.status.as_str(),
-            "plan-review-rejected" | "code-review-rejected"
+            "plan-review-rejected" | "code-review-rejected" | "integration-review-rejected"
         ))
 }
 
@@ -1821,6 +2510,32 @@ fn refresh_agent_phase(request: &Request, phase: AgentPhase) -> Result<bool> {
         AgentPhase::Implementation => {
             submit_gate_from_tick(&request.request_id, "change-doc")?;
             run_code_review_from_tick(&request.request_id)
+        }
+        AgentPhase::Rebase => {
+            ensure_rebase_ready_for_integration_review(request)?;
+            let mut requests = load_requests()?;
+            let index = find_request_index(&requests, &request.request_id)
+                .ok_or_else(|| format!("unknown request_id: {}", request.request_id))?;
+            let mut refreshed = requests[index].clone();
+            append_integration_record(
+                &refreshed,
+                &IntegrationRecord {
+                    mode: "rebase-agent-completed",
+                    base_branch: "",
+                    base_ref: "",
+                    before_head: "",
+                    after_head: "",
+                    pr_status: "agent completed",
+                    detail: "RebaseAgent exited successfully; running IntegrationReviewer.",
+                },
+            )?;
+            mark_integration_review_submitted(
+                &mut requests,
+                index,
+                &mut refreshed,
+                "rebase agent completed",
+            )?;
+            run_integration_review_from_tick(&request.request_id)
         }
     }
 }
@@ -1925,7 +2640,25 @@ fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match code_review(&args) {
         Ok(()) => {
-            mark_waiting_finish_by_id(request_id)?;
+            mark_wait_update_pr_by_id(
+                request_id,
+                "code-review approved; waiting for PR creation or update",
+            )?;
+            Ok(true)
+        }
+        Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+fn run_integration_review_from_tick(request_id: &str) -> Result<bool> {
+    let args = vec!["--request_id".to_string(), request_id.to_string()];
+    match integration_review(&args) {
+        Ok(()) => {
+            mark_wait_update_pr_by_id(
+                request_id,
+                "integration-review approved; waiting for PR branch update",
+            )?;
             Ok(true)
         }
         Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
@@ -1936,6 +2669,7 @@ fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
 fn is_review_terminal_error(message: &str) -> bool {
     message.contains("rejected plan review")
         || message.contains("rejected code review")
+        || message.contains("rejected integration review")
         || message.contains("review gate unavailable")
         || message.contains("gate unavailable")
 }
@@ -1949,21 +2683,28 @@ fn block_request_by_id(request_id: &str, stage: &str, reason: &str) -> Result<()
     mark_blocked(&mut requests, index, &mut request, stage, reason)
 }
 
-fn mark_waiting_finish_by_id(request_id: &str) -> Result<()> {
+fn mark_wait_update_pr_by_id(request_id: &str, reason: &str) -> Result<()> {
     let mut requests = load_requests()?;
     let index = find_request_index(&requests, request_id)
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
-    if request.status == "waiting-finish" {
+    if canonical_status(&request.status) == STATUS_WAIT_UPDATE_PR {
         return Ok(());
     }
     ensure_gate_approved(&request, "change-doc")?;
-    request.status = "waiting-finish".to_string();
+    request.status = STATUS_WAIT_UPDATE_PR.to_string();
     request.updated_at = now_string();
     requests[index] = request.clone();
     save_requests(&requests)?;
-    write_status_json(&request, "implementation", "waiting-finish", "")?;
-    upsert_session_for_request(&request, "implementation", "waiting-finish")
+    write_status_json(&request, "delivery", STATUS_WAIT_UPDATE_PR, reason)?;
+    append_event(
+        "waiting_pr_update",
+        &request.request_id,
+        "delivery",
+        STATUS_WAIT_UPDATE_PR,
+        reason,
+    )?;
+    upsert_session_for_request(&request, "implementation", STATUS_WAIT_UPDATE_PR)
 }
 
 fn parse_max_attempts(value: Option<String>) -> Result<u32> {
@@ -2238,8 +2979,9 @@ fn fetch_if_remote_exists() -> Result<()> {
 }
 
 fn spawn_issue_agent(request: &Request, max_attempts: u32, phase: AgentPhase) -> Result<u32> {
-    if !Path::new(ISSUE_AGENT_TOOL).exists() {
-        return Err(format!("{ISSUE_AGENT_TOOL} does not exist").into());
+    let tool_path = phase.tool_path();
+    if !Path::new(tool_path).exists() {
+        return Err(format!("{tool_path} does not exist").into());
     }
     fs::create_dir_all(agent_state_dir())?;
     let stdout = fs::File::create(agent_stdout_path(&request.request_id))?;
@@ -2254,7 +2996,7 @@ fn spawn_issue_agent(request: &Request, max_attempts: u32, phase: AgentPhase) ->
         .arg("-c")
         .arg("tool=$1; exit_path=$2; hook_log=$3; run_hook() { code=$1; if [ -n \"${CODEX_AUTO_DEV_BIN:-}\" ] && [ -n \"${CODEX_AUTO_DEV_REQUEST_ID:-}\" ]; then \"$CODEX_AUTO_DEV_BIN\" advance --request_id \"$CODEX_AUTO_DEV_REQUEST_ID\" --max-attempts \"${CODEX_AUTO_DEV_MAX_ATTEMPTS:-20}\" >> \"$hook_log\" 2>&1 || true; fi; }; write_exit() { code=$1; printf '%s\n' \"$code\" > \"$exit_path\"; run_hook \"$code\"; exit \"$code\"; }; trap 'write_exit 129' HUP; trap 'write_exit 130' INT; trap 'write_exit 143' TERM; sh \"$tool\"; write_exit \"$?\"")
         .arg("codex-auto-dev-agent-wrapper")
-        .arg(ISSUE_AGENT_TOOL)
+        .arg(tool_path)
         .arg(&exit_path)
         .arg(&hook_log_path)
         .current_dir(".")
@@ -2329,6 +3071,10 @@ fn apply_issue_agent_env(
         .env(
             "CODEX_AUTO_DEV_ISSUE_AGENT_PROMPT",
             absolute_path_string(phase.prompt_path()),
+        )
+        .env(
+            "CODEX_AUTO_DEV_REBASE_AGENT_PROMPT",
+            absolute_path_string(REBASE_AGENT_PROMPT),
         )
         .env(
             "CODEX_AUTO_DEV_AGENT_PROMPT",
@@ -2555,8 +3301,8 @@ fn validate_gate(gate: &str) -> Result<()> {
 
 fn validate_session_phase(phase: &str) -> Result<()> {
     match phase {
-        "planning" | "implementation" => Ok(()),
-        _ => Err("phase must be `planning` or `implementation`".into()),
+        "planning" | "implementation" | "rebase" => Ok(()),
+        _ => Err("phase must be `planning`, `implementation`, or `rebase`".into()),
     }
 }
 
@@ -2631,13 +3377,18 @@ fn should_write_managed_artifact(path: &Path) -> Result<bool> {
         return Ok(true);
     }
     let content = fs::read_to_string(path)?;
+    if path.file_name().and_then(|name| name.to_str()) == Some("agent-journal.md") {
+        return Ok(content.trim().is_empty()
+            || content.contains("# Thread Handoff")
+            || content.contains("Codex Plan Prompt")
+            || content.contains("Codex Start Prompt"));
+    }
     Ok(content.contains("This is a template. Codex")
         || content.contains("This HTML file is a visual planning template")
         || content.contains("Start a new Codex thread")
         || content.contains("# Thread Handoff")
         || content.contains("Codex Plan Prompt")
         || content.contains("Codex Start Prompt")
-        || content.contains("agent 每轮")
         || content.contains("这是计划模板")
         || content.contains("这是规格模板")
         || content.contains("这是任务模板")
@@ -2660,7 +3411,7 @@ fn usage(command: &str) -> Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: codex-auto-dev <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts 20] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts 20]\n  doctor\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <plan|change-doc>\n  approve --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  approvals --request_id <REQ-0001> [--json]\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <planning|implementation> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]"
+        "Usage: codex-auto-dev <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts 20] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts 20]\n  doctor\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <plan|change-doc>\n  approve --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  approvals --request_id <REQ-0001> [--json]\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts 20]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]"
     );
 }
 
@@ -2677,6 +3428,20 @@ mod tests {
         let html = dashboard_html();
         assert!(html.contains("display: flex;"));
         assert!(html.contains("class=\"request-list\""));
+        assert!(html.contains("timeline-track"));
+        assert!(html.contains("timeline-main"));
+        assert!(html.contains("timeline-branch"));
+        assert!(html.contains("hasIntegrationFlow"));
+        assert!(html.contains("isLowerTimelineStage"));
+        assert!(html.contains("orderedLowerTimelineStages"));
+        assert!(html.contains("lowerStageMarker"));
+        assert!(html.contains("updateIntegrationConnector"));
+        assert!(html.contains("integration-connector-path"));
+        assert!(html.contains("stroke: var(--line-strong);"));
+        assert!(html.contains(".stage.branch .dot { border-color: var(--line-strong);"));
+        assert!(!html.contains("stroke: #d6a31f;"));
+        assert!(!html.contains("background: #e7c46a;"));
+        assert!(html.contains("isBranchStage"));
         assert!(html.contains("marked.min.js"));
         assert!(html.contains("DOMPurify"));
         assert!(html.contains("highlight.js"));
@@ -2684,9 +3449,16 @@ mod tests {
         assert!(html.contains("renderMarkdownContent"));
         assert!(html.contains("mountJsonViewer"));
         assert!(html.contains("data-json-detail"));
+        assert!(html.contains("orderedRequests(project)"));
+        assert!(html.contains("request.status === \"finished\" ? 1 : 0"));
+        assert!(html.contains("PR 待合并"));
         assert!(html.contains("tag(\"blocked\", \"blocked\""));
         assert!(html.contains("tag(\"pending\", \"pending\""));
         assert!(html.contains("tag(\"finish\", \"finish\""));
+        assert!(html.contains("if (status === \"finished\") return \"done\";"));
+        assert!(!html.contains(
+            "status === \"wait-update-pr\" || status === \"change-doc-approved\") return \"done\""
+        ));
         assert!(!html.contains("tag(\"waiting\""));
         assert!(!html.contains("tag(\"running\""));
         assert!(!html.contains("tag(\"\", \"requests\""));

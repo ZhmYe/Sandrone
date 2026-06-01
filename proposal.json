@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-31",
+  "updated_at": "2026-06-01",
   "proposals": [
     {
       "id": "initial-rust-cli",
@@ -504,6 +504,118 @@
         "tasks_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/tasks.md",
         "plan_html": "docs/proposals/2026-05-31/readme-dashboard-command-docs/plan.html",
         "change_doc_md": "docs/proposals/2026-05-31/readme-dashboard-command-docs/change-doc.md"
+      }
+    },
+    {
+      "id": "pr-refresh-integration-review",
+      "date": "2026-06-01",
+      "title": "PR Refresh Integration Review",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/pr-refresh-integration-review",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/pr-refresh-integration-review/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/pr-refresh-integration-review/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/pr-refresh-integration-review/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/pr-refresh-integration-review/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/pr-refresh-integration-review/change-doc.md"
+      }
+    },
+    {
+      "id": "pr-pending-finish-state",
+      "date": "2026-06-01",
+      "title": "PR Pending Finish State",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/pr-pending-finish-state",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/pr-pending-finish-state/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/pr-pending-finish-state/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/pr-pending-finish-state/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/pr-pending-finish-state/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/pr-pending-finish-state/change-doc.md"
+      }
+    },
+    {
+      "id": "dashboard-pr-refresh-bypass-timeline",
+      "date": "2026-06-01",
+      "title": "Dashboard PR Refresh Bypass Timeline",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/dashboard-pr-refresh-bypass-timeline/change-doc.md"
+      }
+    },
+    {
+      "id": "pr-conflict-attempt-records",
+      "date": "2026-06-01",
+      "title": "PR Conflict Attempt Records",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/pr-conflict-attempt-records",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/pr-conflict-attempt-records/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/pr-conflict-attempt-records/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/pr-conflict-attempt-records/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/pr-conflict-attempt-records/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/pr-conflict-attempt-records/change-doc.md"
+      }
+    },
+    {
+      "id": "upgrade-preserve-agent-journal",
+      "date": "2026-06-01",
+      "title": "Upgrade Preserve Agent Journal",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/upgrade-preserve-agent-journal/change-doc.md"
+      }
+    },
+    {
+      "id": "dashboard-integration-review-secondary-timeline",
+      "date": "2026-06-01",
+      "title": "Dashboard Integration Review Secondary Timeline",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/dashboard-integration-review-secondary-timeline/change-doc.md"
+      }
+    },
+    {
+      "id": "finish-status-semantics",
+      "date": "2026-06-01",
+      "title": "Finish Status Semantics",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/finish-status-semantics",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/finish-status-semantics/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/finish-status-semantics/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/finish-status-semantics/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/finish-status-semantics/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/finish-status-semantics/change-doc.md"
+      }
+    },
+    {
+      "id": "dashboard-unfinished-request-priority",
+      "date": "2026-06-01",
+      "title": "Dashboard Unfinished Request Priority",
+      "status": "implemented",
+      "path": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority",
+      "artifacts": {
+        "spec_md": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority/spec.md",
+        "plan_md": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority/plan.md",
+        "tasks_md": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority/tasks.md",
+        "plan_html": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority/plan.html",
+        "change_doc_md": "docs/proposals/2026-06-01/dashboard-unfinished-request-priority/change-doc.md"
       }
     }
   ]

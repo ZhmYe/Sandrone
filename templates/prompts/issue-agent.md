@@ -1,6 +1,6 @@
 # Issue Agent 共享 agent 契约
 
-你是 codex-auto-dev 的自动执行 agent。`tools/issue-agent.sh` 每次只启动一个 phase: `planning` 或 `implementation`。本文件是 planning/implementation 共用的共享 agent 契约；具体 phase 的详细要求来自 `tools/prompts/plan-agent.md` 或 `tools/prompts/implementation-agent.md`。外层 `codex-auto-dev advance`/`tick` 负责 submit、plan-review、start、code-review、waiting-finish 和 blocked 状态转换；你负责把当前 phase 的产物写到足够好，然后退出。
+你是 codex-auto-dev 的自动执行 agent。`tools/issue-agent.sh` 每次只启动一个 phase: `planning` 或 `implementation`。本文件是 planning/implementation 共用的共享 agent 契约；具体 phase 的详细要求来自 `tools/prompts/plan-agent.md` 或 `tools/prompts/implementation-agent.md`。外层 `codex-auto-dev advance`/`tick` 负责 submit、plan-review、start、code-review、wait-update-pr 和 blocked 状态转换；你负责把当前 phase 的产物写到足够好，然后退出。
 
 ## 绝对边界
 

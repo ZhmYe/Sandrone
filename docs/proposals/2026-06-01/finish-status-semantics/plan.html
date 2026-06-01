@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Finish 状态语义收敛</title>
+</head>
+<body>
+  <h1>Finish 状态语义收敛</h1>
+  <p><code>wait-update-pr</code> 表示 PR 需要创建或更新，<code>wait-finish</code> 表示 PR 已更新待合并，<code>finished</code> 只表示 PR 已确认合并。</p>
+  <ol>
+    <li>兼容 legacy status。</li>
+    <li>让 review 通过后直接落到 <code>wait-update-pr</code>。</li>
+    <li>让 PR status check 决定 <code>wait-finish</code> 或 <code>finished</code>。</li>
+    <li>更新 dashboard、README、skill 和测试。</li>
+  </ol>
+</body>
+</html>

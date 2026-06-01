@@ -227,6 +227,9 @@ fn help_lists_state_and_validation_commands() {
     assert!(stdout.contains("  dashboard"));
     assert!(stdout.contains("  status [REQ-0001]"));
     assert!(stdout.contains("  validate"));
+    assert!(stdout.contains("  pr-status --request_id <REQ-0001>"));
+    assert!(stdout.contains("  pr-refresh --request_id <REQ-0001>"));
+    assert!(stdout.contains("  integration-review --request_id <REQ-0001>"));
 }
 
 #[test]
@@ -272,16 +275,20 @@ fn templates_are_external_assets_not_embedded_in_main() {
         "templates/prompts/issue-agent.md",
         "templates/prompts/plan-agent.md",
         "templates/prompts/implementation-agent.md",
+        "templates/prompts/rebase-agent.md",
         "templates/prompts/plan-reviewer.md",
         "templates/prompts/test-reviewer.md",
         "templates/prompts/design-reviewer.md",
+        "templates/prompts/integration-reviewer.md",
         "templates/runtime/plan.md",
         "templates/runtime/change-doc.md",
         "templates/schemas/review-result.schema.json",
         "templates/scripts/issue-update.sh",
         "templates/scripts/issue-agent.sh",
+        "templates/scripts/rebase-agent.sh",
         "templates/scripts/review-tool.sh",
         "templates/scripts/pr-create.sh",
+        "templates/scripts/pr-status.sh",
         "src/assets.rs",
         "src/dashboard.rs",
         "src/delivery.rs",
@@ -386,6 +393,9 @@ fn skill_requires_install_or_verify_cli_before_workspace_commands() {
     assert!(SOURCE_SKILL.contains("src/review_gate.rs"));
     assert!(SOURCE_SKILL.contains("src/defaults.rs"));
     assert!(SOURCE_SKILL.contains("templates/prompts/*.md"));
+    assert!(SOURCE_SKILL.contains("RebaseAgent"));
+    assert!(SOURCE_SKILL.contains("IntegrationReviewer"));
+    assert!(SOURCE_SKILL.contains("不能为了自己分支的修改删除 base/master 新代码"));
 }
 
 #[test]
@@ -408,10 +418,18 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(workspace.join("tools/plan-review.sh").is_file());
     assert!(workspace.join("tools/test-review.sh").is_file());
     assert!(workspace.join("tools/design-review.sh").is_file());
+    assert!(workspace.join("tools/integration-review.sh").is_file());
     assert!(workspace.join("tools/issue-agent.sh").is_file());
+    assert!(workspace.join("tools/rebase-agent.sh").is_file());
+    assert!(workspace.join("tools/pr-status.sh").is_file());
     assert!(workspace.join("tools/prompts/plan-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/test-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/design-reviewer.md").is_file());
+    assert!(
+        workspace
+            .join("tools/prompts/integration-reviewer.md")
+            .is_file()
+    );
     assert!(workspace.join("tools/prompts/issue-agent.md").is_file());
     assert!(workspace.join("tools/prompts/plan-agent.md").is_file());
     assert!(
@@ -419,6 +437,7 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
             .join("tools/prompts/implementation-agent.md")
             .is_file()
     );
+    assert!(workspace.join("tools/prompts/rebase-agent.md").is_file());
     assert!(
         workspace
             .join("tools/schemas/review-result.schema.json")
@@ -427,10 +446,16 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     for (target, example) in [
         ("tools/issue-update.sh", "tools/issue-update.example.sh"),
         ("tools/issue-agent.sh", "tools/issue-agent.example.sh"),
+        ("tools/rebase-agent.sh", "tools/rebase-agent.example.sh"),
         ("tools/pr-create.sh", "tools/pr-create.example.sh"),
+        ("tools/pr-status.sh", "tools/pr-status.example.sh"),
         ("tools/plan-review.sh", "tools/plan-review.example.sh"),
         ("tools/test-review.sh", "tools/test-review.example.sh"),
         ("tools/design-review.sh", "tools/design-review.example.sh"),
+        (
+            "tools/integration-review.sh",
+            "tools/integration-review.example.sh",
+        ),
         (
             "tools/prompts/issue-agent.md",
             "tools/prompts/issue-agent.example.md",
@@ -444,6 +469,10 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
             "tools/prompts/implementation-agent.example.md",
         ),
         (
+            "tools/prompts/rebase-agent.md",
+            "tools/prompts/rebase-agent.example.md",
+        ),
+        (
             "tools/prompts/plan-reviewer.md",
             "tools/prompts/plan-reviewer.example.md",
         ),
@@ -454,6 +483,10 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
         (
             "tools/prompts/design-reviewer.md",
             "tools/prompts/design-reviewer.example.md",
+        ),
+        (
+            "tools/prompts/integration-reviewer.md",
+            "tools/prompts/integration-reviewer.example.md",
         ),
         (
             "tools/schemas/review-result.schema.json",
@@ -520,6 +553,19 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(implementation_agent_prompt.contains("不得退出交给 code-review"));
     assert!(implementation_agent_prompt.contains("## Change Doc 必须包含"));
     assert!(implementation_agent_prompt.contains("不运行 `submit`、`code-review`"));
+    assert!(implementation_agent_prompt.contains("不处理 PR rebase 冲突"));
+    let rebase_agent =
+        fs::read_to_string(workspace.join("tools/rebase-agent.sh")).expect("rebase tool readable");
+    assert!(rebase_agent.contains("Connector contract"));
+    assert!(rebase_agent.contains("CODEX_AUTO_DEV_AGENT_PHASE"));
+    assert!(rebase_agent.contains("rebase"));
+    assert!(rebase_agent.contains("resolve_codex_bin"));
+    let rebase_agent_prompt = fs::read_to_string(workspace.join("tools/prompts/rebase-agent.md"))
+        .expect("rebase agent prompt readable");
+    assert!(rebase_agent_prompt.contains("RebaseAgent"));
+    assert!(rebase_agent_prompt.contains("保留 base/master"));
+    assert!(rebase_agent_prompt.contains("不能为了自己分支的修改删除 base/master 新代码"));
+    assert!(rebase_agent_prompt.contains("不得扩大需求范围"));
     let pr_tool =
         fs::read_to_string(workspace.join("tools/pr-create.sh")).expect("pr tool readable");
     assert!(pr_tool.contains("Connector contract"));
@@ -527,6 +573,10 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(pr_tool.contains("existing<TAB>url"));
     assert!(pr_tool.contains("gh pr list"));
     assert!(pr_tool.contains("gh pr create"));
+    let pr_status_tool =
+        fs::read_to_string(workspace.join("tools/pr-status.sh")).expect("pr status tool readable");
+    assert!(pr_status_tool.contains("Connector contract"));
+    assert!(pr_status_tool.contains("status<TAB>url<TAB>detail"));
     let review_tool =
         fs::read_to_string(workspace.join("tools/plan-review.sh")).expect("review tool readable");
     assert!(review_tool.contains("Connector contract"));
@@ -555,6 +605,14 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(design_review_prompt.contains("## 独立评审边界"));
     assert!(design_review_prompt.contains("不得读取 `reviews/`"));
     assert!(design_review_prompt.contains("不得读取、引用或依赖 TestReviewer"));
+    let integration_review_prompt =
+        fs::read_to_string(workspace.join("tools/prompts/integration-reviewer.md"))
+            .expect("integration reviewer prompt readable");
+    assert!(integration_review_prompt.contains("IntegrationReviewer"));
+    assert!(integration_review_prompt.contains("没有 `<<<<<<<`"));
+    assert!(integration_review_prompt.contains("保留 base/master"));
+    assert!(integration_review_prompt.contains("不能为了自己分支的修改删除 base/master 新代码"));
+    assert!(integration_review_prompt.contains("change-doc"));
     let review_schema =
         fs::read_to_string(workspace.join("tools/schemas/review-result.schema.json"))
             .expect("review schema readable");
@@ -712,8 +770,13 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
     let change_path = workspace_one.join("docs/changes").join(&change_name);
     let plan_review_details = change_path.join("reviews/plan-review/details");
     let code_review_details = change_path.join("reviews/code-review/details");
+    let integration_review_details = change_path.join("reviews/integration-review/details");
+    let pr_conflict_attempts = change_path.join("pr-conflicts/attempts");
     fs::create_dir_all(&plan_review_details).expect("plan review details dir writable");
     fs::create_dir_all(&code_review_details).expect("code review details dir writable");
+    fs::create_dir_all(&integration_review_details)
+        .expect("integration review details dir writable");
+    fs::create_dir_all(&pr_conflict_attempts).expect("pr conflict attempts dir writable");
     fs::write(
         plan_review_details.join("001-plan-reviewer.json"),
         "{\"reviewer\":\"PlanReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"planning\",\"summary\":\"round one asks for more detail\",\"process\":[\"read request\",\"read plan\"],\"critical\":[],\"high\":[{\"title\":\"缺少测试计划\",\"evidence\":\"plan.md 没有失败路径测试\",\"impact\":\"实现可能没有回归保护\",\"required_fix\":\"补充测试计划\",\"suggested_change\":\"在 plan.md 的测试章节列出失败路径和回归路径。\",\"verification\":\"重新运行 plan-review。\"}],\"warning\":[],\"info\":[]}\n",
@@ -734,6 +797,28 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
         "{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"read design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}\n",
     )
     .expect("design review detail writable");
+    fs::write(
+        integration_review_details.join("001-integration-reviewer.json"),
+        "{\"reviewer\":\"IntegrationReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"integration ok\",\"process\":[\"checked rebase\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[{\"title\":\"保留 base/master\",\"evidence\":\"change-doc.md 记录 PR 集成刷新记录\",\"impact\":\"人类 reviewer 可以确认 rebase 支线\",\"required_fix\":\"无需修复\",\"suggested_change\":\"继续在 PR 中查看集成记录。\",\"verification\":\"dashboard 显示 integration-review detail。\"}]}\n",
+    )
+    .expect("integration review detail writable");
+    fs::write(
+        change_path.join("change-doc.md"),
+        "# Change\n\n## PR 集成刷新记录\n\n保留 base/master。\n",
+    )
+    .expect("change doc with integration record writable");
+    fs::write(
+        pr_conflict_attempts.join("001-rebase-conflict.md"),
+        "# PR 冲突记录 Attempt 001\n\n## 冲突诊断\n\nRebase stopped with conflicts in README.md。\n",
+    )
+    .expect("pr conflict attempt writable");
+    force_request_state(
+        &workspace_one,
+        "REQ-0001",
+        "wait-update-pr",
+        "codex/req-0001",
+        "dev/worktrees/REQ-0001",
+    );
 
     let dashboard_root = temp_workspace("dashboard-root");
     let output = run_with_env(
@@ -752,6 +837,15 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
     assert!(stdout.contains("\"stage_id\": \"implementation\""));
     assert!(stdout.contains("\"stage_id\": \"code-review\""));
     assert!(stdout.contains("\"stage_id\": \"finish-pr\""));
+    assert!(stdout.contains(
+        "\"stage_id\": \"finish-pr\", \"label\": \"Finish / PR\", \"title\": \"交付与 PR\", \"state\": \"active\""
+    ));
+    assert!(stdout.contains("\"stage_id\": \"pr-refresh\""));
+    assert!(stdout.contains("\"title\": \"PR 冲突与刷新记录\""));
+    assert!(stdout.contains("pr-conflicts/attempts"));
+    assert!(stdout.contains("PR Refresh 冲突记录"));
+    assert!(stdout.contains("Rebase stopped with conflicts in README.md"));
+    assert!(stdout.contains("\"stage_id\": \"integration-review\""));
     assert!(stdout.contains("\"artifact_path\": \"docs/changes"));
     assert!(stdout.contains("plan.md"));
     assert!(stdout.contains("change-doc.md"));
@@ -762,6 +856,9 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
     assert!(stdout.contains("002-plan-reviewer.json"));
     assert!(stdout.contains("TestReviewer"));
     assert!(stdout.contains("DesignReviewer"));
+    assert!(stdout.contains("IntegrationReviewer"));
+    assert!(stdout.contains("integration ok"));
+    assert!(stdout.contains("保留 base/master"));
     assert!(stdout.contains("round two approved"));
     assert!(stdout.contains("保留人工关注点"));
     assert!(stdout.contains("\"artifact_kind\": \"review-details\""));
@@ -1260,6 +1357,11 @@ fn finish_requires_change_doc_approval_then_commits_and_pushes_request_branch() 
         "#!/usr/bin/env sh\nset -eu\ncp \"$CODEX_AUTO_DEV_PR_BODY_FILE\" .codex-auto-dev/state/captured-pr-body.md\nprintf 'https://example.test/pr/1\\n'\n",
     )
     .expect("pr connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'open\\thttps://example.test/pr/1\\tstill under review\\n'\n",
+    )
+    .expect("pr status connector should be writable");
     assert_success(&run(&workspace, &["update"]));
     assert_success(&run(
         &workspace,
@@ -1347,7 +1449,8 @@ fn finish_requires_change_doc_approval_then_commits_and_pushes_request_branch() 
 
     let state = fs::read_to_string(workspace.join(".codex-auto-dev/state/requests.tsv"))
         .expect("state should be readable");
-    assert!(state.contains("finished"));
+    assert!(state.contains("wait-finish"));
+    assert!(!state.contains("\tfinished\t"));
     let pushed_commit = git_output(&origin, &["rev-parse", "refs/heads/codex/req-0001"]);
     assert!(!pushed_commit.is_empty());
     let commit_message = git_output(&worktree, &["log", "-1", "--pretty=%s"]);
@@ -1379,6 +1482,26 @@ fn finish_requires_change_doc_approval_then_commits_and_pushes_request_branch() 
     assert!(approval.contains("\"status\": \"approved\""));
     assert!(approval.contains("\"artifact_sha256\""));
     assert!(approval.contains("变更文档已检查"));
+
+    let pending_check = run(&workspace, &["pr-status", "--request_id", "REQ-0001"]);
+    assert_success(&pending_check);
+    let pending_stdout = String::from_utf8_lossy(&pending_check.stdout);
+    assert!(pending_stdout.contains("PR status for REQ-0001: open"));
+    assert!(pending_stdout.contains("request remains wait-finish"));
+
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'merged\\thttps://example.test/pr/1\\tmerged into base\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    let merged_check = run(&workspace, &["finish", "--request_id", "REQ-0001"]);
+    assert_success(&merged_check);
+    let merged_stdout = String::from_utf8_lossy(&merged_check.stdout);
+    assert!(merged_stdout.contains("PR status for REQ-0001: merged"));
+    assert!(merged_stdout.contains("request marked finished"));
+    let state = fs::read_to_string(workspace.join(".codex-auto-dev/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("\tfinished\t"));
 }
 
 #[test]
@@ -1405,6 +1528,11 @@ fn finish_reports_existing_pr_from_pr_connector() {
         "#!/usr/bin/env sh\nset -eu\nprintf 'existing\\thttps://example.test/pr/existing\\n'\n",
     )
     .expect("pr connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'open\\thttps://example.test/pr/existing\\tstill open\\n'\n",
+    )
+    .expect("pr status connector should be writable");
     assert_success(&run(&workspace, &["update"]));
     assert_success(&run(
         &workspace,
@@ -1464,8 +1592,165 @@ fn finish_reports_existing_pr_from_pr_connector() {
     );
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("marked wait-finish"));
     assert!(stdout.contains("PR already exists: https://example.test/pr/existing"));
     assert!(!stdout.contains("PR created: https://example.test/pr/existing"));
+
+    let refreshed = run(&workspace, &["finish", "--request_id", "REQ-0001"]);
+    assert_success(&refreshed);
+    let refreshed_stdout = String::from_utf8_lossy(&refreshed.stdout);
+    assert!(refreshed_stdout.contains("PR status for REQ-0001: open"));
+    assert!(refreshed_stdout.contains("request remains wait-finish"));
+
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'merged\\thttps://example.test/pr/existing\\tmerged after review\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    let finished = run(&workspace, &["pr-status", "--request_id", "REQ-0001"]);
+    assert_success(&finished);
+    let finished_stdout = String::from_utf8_lossy(&finished.stdout);
+    assert!(finished_stdout.contains("PR status for REQ-0001: merged"));
+    assert!(finished_stdout.contains("request marked finished"));
+}
+
+#[test]
+fn pr_refresh_conflict_uses_rebase_agent_and_integration_review() {
+    let workspace = temp_workspace("pr-refresh-conflict");
+    let change_name = format!("{}-rebase-conflict-feature", current_date());
+    let origin = create_bare_origin_with_master("pr-refresh-conflict-origin");
+    assert_success(&run(
+        &workspace,
+        &[
+            "new",
+            "--url",
+            origin.to_str().expect("origin should be utf-8"),
+        ],
+    ));
+    assert_git_success(&workspace.join("dev/repo"), &["checkout", "master"]);
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'github:owner/repo#44\\tgithub\\tRebase conflict feature\\tBody\\thttps://github.com/owner/repo/issues/44\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-create.sh"),
+        "#!/usr/bin/env sh\nset -eu\nprintf 'existing\\thttps://example.test/pr/rebase\\n'\n",
+    )
+    .expect("pr connector should be writable");
+    fs::write(
+        workspace.join("tools/rebase-agent.sh"),
+        "#!/usr/bin/env sh\nset -eu\ncd \"$CODEX_AUTO_DEV_WORKTREE\"\nprintf '# Source\\nmaster line\\nfeature line\\n' > README.md\ngit add README.md\nGIT_EDITOR=true git rebase --continue\nprintf '\\n## 测试 RebaseAgent 记录\\n\\n- 保留 base/master: master line\\n- 保留 request 分支: feature line\\n' >> \"$CODEX_AUTO_DEV_CHANGE_DOC\"\n",
+    )
+    .expect("rebase agent connector should be writable");
+    fs::write(
+        workspace.join("tools/integration-review.sh"),
+        "#!/usr/bin/env sh\nset -eu\nif grep -R '<<<<<<<' \"$CODEX_AUTO_DEV_WORKTREE\" >/dev/null 2>&1; then\n  printf '{\"reviewer\":\"IntegrationReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"implementation\",\"summary\":\"conflict markers remain\",\"process\":[\"checked worktree\"],\"critical\":[{\"title\":\"conflict markers remain\",\"evidence\":\"worktree still contains conflict markers\",\"impact\":\"branch cannot be safely reviewed or merged\",\"required_fix\":\"remove conflict markers and complete rebase\",\"suggested_change\":\"resolve conflicted files and rerun integration review\",\"verification\":\"grep for conflict markers returns no matches\"}],\"high\":[],\"warning\":[],\"info\":[]}'\n  exit 0\nfi\nif ! grep -q 'master line' \"$CODEX_AUTO_DEV_WORKTREE/README.md\" || ! grep -q 'feature line' \"$CODEX_AUTO_DEV_WORKTREE/README.md\"; then\n  printf '{\"reviewer\":\"IntegrationReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"implementation\",\"summary\":\"base or branch change was dropped\",\"process\":[\"checked README\"],\"critical\":[],\"high\":[{\"title\":\"base or branch change dropped\",\"evidence\":\"README.md does not preserve both master line and feature line\",\"impact\":\"rebase lost behavior from either base/master or request branch\",\"required_fix\":\"preserve both sides of the conflict\",\"suggested_change\":\"rewrite README.md to keep master line and feature line, then rerun tests\",\"verification\":\"grep confirms both lines exist\"}],\"warning\":[],\"info\":[]}'\n  exit 0\nfi\nprintf '{\"reviewer\":\"IntegrationReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"integration preserved base and branch changes\",\"process\":[\"checked conflict markers\",\"checked base/master preservation\",\"checked request branch preservation\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[{\"title\":\"base/master preserved\",\"evidence\":\"README.md contains master line and feature line\",\"impact\":\"human reviewer can see both sides were retained\",\"required_fix\":\"none\",\"suggested_change\":\"keep this integration note in change-doc\",\"verification\":\"grep confirms both lines exist\"}]}'\n",
+    )
+    .expect("integration reviewer connector should be writable");
+
+    assert_success(&run(&workspace, &["update"]));
+    assert_success(&run(
+        &workspace,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "plan",
+            "--by",
+            "tester",
+        ],
+    ));
+    assert_success(&run(&workspace, &["start", "--request_id", "REQ-0001"]));
+    let worktree = workspace.join("dev/worktrees/REQ-0001");
+    assert_git_success(&worktree, &["config", "user.name", "Test User"]);
+    assert_git_success(&worktree, &["config", "user.email", "test@example.local"]);
+    fs::write(worktree.join("README.md"), "# Source\nfeature line\n")
+        .expect("feature README should be writable");
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "change-doc"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "change-doc",
+            "--by",
+            "tester",
+        ],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "finish",
+            "--request_id",
+            "REQ-0001",
+            "--message",
+            "feat: deliver rebase conflict feature",
+        ],
+    ));
+
+    let repo = workspace.join("dev/repo");
+    assert_git_success(&repo, &["config", "user.name", "Test User"]);
+    assert_git_success(&repo, &["config", "user.email", "test@example.local"]);
+    assert_git_success(&repo, &["checkout", "master"]);
+    fs::write(repo.join("README.md"), "# Source\nmaster line\n")
+        .expect("master README should be writable");
+    assert_git_success(&repo, &["add", "README.md"]);
+    assert_git_success(&repo, &["commit", "-m", "Update master line"]);
+    assert_git_success(&repo, &["push", "origin", "master"]);
+
+    let refresh = run(&workspace, &["pr-refresh", "--request_id", "REQ-0001"]);
+    assert_success(&refresh);
+    let refresh_stdout = String::from_utf8_lossy(&refresh.stdout);
+    assert!(refresh_stdout.contains("rebase conflict"));
+    assert!(refresh_stdout.contains("rebase-agent"));
+
+    wait_for_file_contains(
+        &workspace.join(".codex-auto-dev/state/requests.tsv"),
+        "wait-update-pr",
+    );
+    let readme = fs::read_to_string(worktree.join("README.md")).expect("README readable");
+    assert!(readme.contains("master line"));
+    assert!(readme.contains("feature line"));
+    let change_doc = fs::read_to_string(
+        workspace
+            .join("docs/changes")
+            .join(&change_name)
+            .join("change-doc.md"),
+    )
+    .expect("change doc readable");
+    assert!(change_doc.contains("PR 集成刷新记录"));
+    assert!(change_doc.contains("PR 冲突记录 (Attempt 001)"));
+    assert!(change_doc.contains("保留 base/master"));
+    let conflict_record = workspace
+        .join("docs/changes")
+        .join(&change_name)
+        .join("pr-conflicts/attempts/001-rebase-conflict.md");
+    assert!(conflict_record.is_file());
+    let conflict_record_content =
+        fs::read_to_string(conflict_record).expect("conflict record readable");
+    assert!(conflict_record_content.contains("PR 冲突记录 Attempt 001"));
+    assert!(conflict_record_content.contains("Rebase stopped with conflicts"));
+    assert!(conflict_record_content.contains("不得为了消除冲突直接删除 master 上的新代码"));
+    let integration_detail = workspace
+        .join("docs/changes")
+        .join(&change_name)
+        .join("reviews/integration-review/details/001-integration-reviewer.json");
+    assert!(integration_detail.is_file());
 }
 
 #[test]
@@ -1768,7 +2053,7 @@ fn advance_syncs_stale_request_index_from_status_json_before_reviewing() {
     );
     let state = fs::read_to_string(workspace.join(".codex-auto-dev/state/requests.tsv"))
         .expect("requests state readable");
-    assert!(state.contains("waiting-finish"));
+    assert!(state.contains("wait-update-pr"));
     assert!(state.contains("dev/worktrees/REQ-0001"));
 }
 
@@ -1812,7 +2097,7 @@ fn list_and_status_sync_stale_request_index_from_status_json() {
     fs::write(
         change_path.join("status.json"),
         format!(
-            "{{\n  \"schema_version\": 1,\n  \"request_id\": \"REQ-0001\",\n  \"stage\": \"implementation\",\n  \"current_phase\": \"waiting-finish\",\n  \"status\": \"waiting-finish\",\n  \"reason\": \"code-review approved\",\n  \"return_to_phase_reason\": \"code-review approved\",\n  \"review_cycle\": 1,\n  \"handoff_artifacts\": {{}},\n  \"branch\": \"codex/req-0001\",\n  \"worktree\": \"dev/worktrees/REQ-0001\",\n  \"updated_at\": \"{}\"\n}}\n",
+            "{{\n  \"schema_version\": 1,\n  \"request_id\": \"REQ-0001\",\n  \"stage\": \"implementation\",\n  \"current_phase\": \"wait-update-pr\",\n  \"status\": \"wait-update-pr\",\n  \"reason\": \"code-review approved\",\n  \"return_to_phase_reason\": \"code-review approved\",\n  \"review_cycle\": 1,\n  \"handoff_artifacts\": {{}},\n  \"branch\": \"codex/req-0001\",\n  \"worktree\": \"dev/worktrees/REQ-0001\",\n  \"updated_at\": \"{}\"\n}}\n",
             current_unix_timestamp()
         ),
     )
@@ -1828,7 +2113,7 @@ fn list_and_status_sync_stale_request_index_from_status_json() {
     let status = run(&workspace, &["status", "REQ-0001"]);
     assert_success(&status);
     let status_stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(status_stdout.contains("status: waiting-finish"));
+    assert!(status_stdout.contains("status: wait-update-pr"));
     assert!(status_stdout.contains("branch: codex/req-0001"));
 
     force_request_state(
@@ -1842,11 +2127,11 @@ fn list_and_status_sync_stale_request_index_from_status_json() {
     assert_success(&list);
     let list_stdout = String::from_utf8_lossy(&list.stdout);
     assert!(list_stdout.contains("REQ-0001"));
-    assert!(list_stdout.contains("waiting-finish"));
+    assert!(list_stdout.contains("wait-update-pr"));
 
     let state = fs::read_to_string(workspace.join(".codex-auto-dev/state/requests.tsv"))
         .expect("requests state readable");
-    assert!(state.contains("waiting-finish"));
+    assert!(state.contains("wait-update-pr"));
     assert!(state.contains("codex/req-0001"));
     assert!(state.contains("dev/worktrees/REQ-0001"));
 }
@@ -2079,6 +2364,15 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
         "#!/usr/bin/env sh\nprintf 'custom connector\\n'\n",
     )
     .expect("custom issue tool should be writable");
+    let journal_path = workspace
+        .join("docs/changes")
+        .join(&change_name)
+        .join("agent-journal.md");
+    fs::write(
+        &journal_path,
+        "# Agent Journal: REQ-0001\n\n这个文件用于避免上下文过长后无法恢复。agent 每轮都必须追加记录。\n\n## Attempt 1 - planning\n\n- Read: 原始需求和目标项目文档。\n- Changed: 填写 plan.md。\n",
+    )
+    .expect("agent journal should be writable");
 
     let dry_run = run(&workspace, &["upgrade", "--dry-run"]);
     assert_success(&dry_run);
@@ -2124,6 +2418,9 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
     assert!(workspace.join("tools/design-review.example.sh").is_file());
     assert!(!workspace.join("tools/issue-agent.sh").exists());
     assert!(workspace.join("tools/issue-agent.example.sh").is_file());
+    let journal = fs::read_to_string(journal_path).expect("agent journal should be readable");
+    assert!(journal.contains("Attempt 1 - planning"));
+    assert!(journal.contains("填写 plan.md"));
     assert!(workspace.join("tools/prompts/issue-agent.md").is_file());
     assert!(
         workspace
@@ -2344,7 +2641,7 @@ printf 'agent called for %s phase=%s max=%s prompt=%s\n' "$CODEX_AUTO_DEV_REQUES
 }
 
 #[test]
-fn tick_refreshes_approved_agent_result_to_waiting_finish() {
+fn tick_refreshes_approved_agent_result_to_wait_update_pr() {
     let workspace = temp_workspace("tick-refresh");
     assert_success(&run(&workspace, &["new", "--name", "tick-refresh-test"]));
     fs::write(
@@ -2411,7 +2708,7 @@ esac
     wait_for_file(&workspace.join(".codex-auto-dev/state/agents/REQ-0001.exit"));
     wait_for_file_contains(
         &workspace.join(".codex-auto-dev/state/requests.tsv"),
-        "waiting-finish",
+        "wait-update-pr",
     );
 
     let refresh_output = run(&workspace, &["tick", "--request_id", "REQ-0001"]);
@@ -2421,7 +2718,7 @@ esac
 
     let state = fs::read_to_string(workspace.join(".codex-auto-dev/state/requests.tsv"))
         .expect("state should be readable");
-    assert!(state.contains("waiting-finish"));
+    assert!(state.contains("wait-update-pr"));
     assert!(!state.contains("finished"));
     let change_doc =
         fs::read_to_string(change_dir.join("change-doc.md")).expect("change-doc readable");
@@ -2496,7 +2793,7 @@ esac
     );
     wait_for_file_contains(
         &workspace.join(".codex-auto-dev/state/requests.tsv"),
-        "waiting-finish",
+        "wait-update-pr",
     );
     let change_dir = fs::read_dir(workspace.join("docs/changes"))
         .expect("changes dir should be readable")

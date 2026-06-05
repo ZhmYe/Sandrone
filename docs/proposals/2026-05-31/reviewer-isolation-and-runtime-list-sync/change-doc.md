@@ -6,8 +6,8 @@
 
 ## 实现前后对比
 
-- 实现前: reviewer 环境中的 `CODEX_AUTO_DEV_CHANGE_PATH` 指向原始 change 目录。历史 `reviews/`、当前轮 TestReviewer detail、历史 summary 都可能被后续 reviewer 读取。
-- 实现后: 每个 reviewer 拿到独立 `CODEX_AUTO_DEV_REVIEW_CONTEXT`，其中没有 `reviews/` 或 agent journal。canonical review detail 仍由框架写回原始 review 目录。
+- 实现前: reviewer 环境中的 `SANDRONE_CHANGE_PATH` 指向原始 change 目录。历史 `reviews/`、当前轮 TestReviewer detail、历史 summary 都可能被后续 reviewer 读取。
+- 实现后: 每个 reviewer 拿到独立 `SANDRONE_REVIEW_CONTEXT`，其中没有 `reviews/` 或 agent journal。canonical review detail 仍由框架写回原始 review 目录。
 - 实现前: `list/status` 直接 `load_requests()`，当 `status.json` 已是 `waiting-finish` 而 TSV 仍是 `implementation-agent-running` 时，用户会看到旧状态。
 - 实现后: `list/status` 输出前运行 runtime sync，只将更靠后的 runtime 状态同步回 TSV。
 
@@ -19,7 +19,7 @@
 
 ### Reviewer 环境变量
 
-`CODEX_AUTO_DEV_CHANGE_PATH` 现在指向隔离 context；`CODEX_AUTO_DEV_REVIEW_CONTEXT` 明确标识该目录；`CODEX_AUTO_DEV_CANONICAL_CHANGE_PATH` 保留 canonical change 目录位置；`CODEX_AUTO_DEV_REVIEW_FORBIDDEN_PATHS` 声明 reviewer 不得读取的原始 review 路径。
+`SANDRONE_CHANGE_PATH` 现在指向隔离 context；`SANDRONE_REVIEW_CONTEXT` 明确标识该目录；`SANDRONE_CANONICAL_CHANGE_PATH` 保留 canonical change 目录位置；`SANDRONE_REVIEW_FORBIDDEN_PATHS` 声明 reviewer 不得读取的原始 review 路径。
 
 ### 观察入口同步
 

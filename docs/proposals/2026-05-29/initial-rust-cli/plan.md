@@ -10,13 +10,13 @@ work item -> plan -> approval -> worktree -> change doc
 
 ## Scope
 
-- Replace the initial JavaScript CLI prototype with a Rust binary named `codex-auto-dev`.
+- Replace the initial JavaScript CLI prototype with a Rust binary named `sandrone`.
 - Clone a target repository into `dev/repo`.
 - Create a from-scratch target repository with `new <project-name>`.
 - Accept manual user requirements with `request`.
 - Provide GitHub create/push helpers that report command failures cleanly.
 - Use CodeGraph as the reusable code understanding layer.
-- Store local runtime state in `.codex-auto-dev/state/items.tsv`.
+- Store local runtime state in `.sandrone/state/items.tsv`.
 - Generate proposal artifacts under `docs/proposals/YYYY-MM-DD/<id>/`.
 - Generate a replaceable issue update tool and Codex workflow skill.
 - Establish durable governance artifacts under `docs/`.

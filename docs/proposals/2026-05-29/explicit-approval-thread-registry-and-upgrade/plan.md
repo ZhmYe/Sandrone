@@ -28,7 +28,7 @@
   - 将 `change-doc.md` 模板调整为实现说明导向，包含实现前后对比、关键设计点和变更范围摘要。
 - 修改 `tests/cli_flow.rs`:
   - 覆盖 approval required、approval stale、finish gate、session registry、upgrade 和中文模板。
-- 修改 `skills/codex-auto-dev-workflow/SKILL.md`:
+- 修改 `skills/sandrone/SKILL.md`:
   - 写明 CLI 验证、显式审批、thread registry、upgrade、中文文档规范和 change-doc 写作标准。
 - 修改 `README.md`:
   - 用中文描述命令、流程和升级方式。
@@ -39,7 +39,7 @@
 
 `config.toml` 新增 `schema_version = 2`。旧 config 没有该字段时按版本 1 读取，`upgrade` 写回版本 2。
 
-旧 workspace 通过 `codex-auto-dev upgrade --dry-run` 预览迁移，再用 `codex-auto-dev upgrade` 应用迁移。迁移只补缺或替换仍为框架默认模板的文件，不覆盖用户已填写内容。
+旧 workspace 通过 `sandrone upgrade --dry-run` 预览迁移，再用 `sandrone upgrade` 应用迁移。迁移只补缺或替换仍为框架默认模板的文件，不覆盖用户已填写内容。
 
 ## 测试策略
 

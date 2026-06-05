@@ -12,7 +12,7 @@
 
 - `src/main.rs`: `sync_request_from_status_json`、状态 rank、review schema、fallback JSON、reviewer prompt。
 - `tests/cli_flow.rs`: stale index 回归测试、finding 详细字段测试。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: reviewer finding 契约说明。
+- `README.md`、`skills/sandrone/SKILL.md`: reviewer finding 契约说明。
 
 ## 状态同步设计
 

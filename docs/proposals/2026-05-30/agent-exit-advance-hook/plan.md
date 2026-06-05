@@ -12,10 +12,10 @@
    复用 tick 的状态刷新、review gate、start 和 agent 派发逻辑，保证 tick 与 hook 行为一致。
 
 4. 添加 per-request lock。
-   使用 `.codex-auto-dev/state/locks/<request_id>.lock/` 避免 heartbeat 与 hook 并发推进。
+   使用 `.sandrone/state/locks/<request_id>.lock/` 避免 heartbeat 与 hook 并发推进。
 
 5. 接入 agent wrapper hook。
-   wrapper 写 exit code 后调用 `codex-auto-dev advance --request_id <REQ>`，输出写入 hook log。
+   wrapper 写 exit code 后调用 `sandrone advance --request_id <REQ>`，输出写入 hook log。
 
 6. 更新文档和 skill。
    说明 heartbeat 负责发现新需求和兜底恢复，hook/advance 负责即时推进。

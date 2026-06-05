@@ -6,7 +6,7 @@
    先调整 `tools/schemas/review-result.schema.json` 的默认模板，再同步 fallback JSON、测试 fixture 和 reviewer prompt。后续 tick 状态机依赖 reviewer 输出稳定。
 
 2. 拆分 agent phase。
-   新增 `AgentPhase`、`plan-agent.md`、`implementation-agent.md`，让默认 `issue-agent.sh` 根据 `CODEX_AUTO_DEV_AGENT_PHASE` 选择提示词。
+   新增 `AgentPhase`、`plan-agent.md`、`implementation-agent.md`，让默认 `issue-agent.sh` 根据 `SANDRONE_AGENT_PHASE` 选择提示词。
 
 3. 重构 tick 状态机。
    `tick` 负责 update、刷新 agent exit、提交 gate、运行 reviewer、创建 worktree、派发下一 phase。子 agent 只写当前 phase 产物。
@@ -27,7 +27,7 @@
   - strict schema 和 fallback fixture 断言。
 - `README.md`
   - 自动流程和 connector contract。
-- `skills/codex-auto-dev-workflow/SKILL.md`
+- `skills/sandrone/SKILL.md`
   - Codex 使用 skill 时必须遵守的新流程。
 
 ## 测试策略

@@ -14,7 +14,7 @@
 - `src/main.rs`: PR body 生成、review finding 渲染、轻量 JSON 数组解析。
 - `tests/cli_flow.rs`: finish PR body 集成测试。
 - `README.md`: PR body 评审意见说明。
-- `skills/codex-auto-dev-workflow/SKILL.md`: skill 中的 finish 契约说明。
+- `skills/sandrone/SKILL.md`: skill 中的 finish 契约说明。
 - `docs/proposals/2026-05-31/pr-body-review-findings/`: 本次框架变更记录。
 
 ## 风险与兼容

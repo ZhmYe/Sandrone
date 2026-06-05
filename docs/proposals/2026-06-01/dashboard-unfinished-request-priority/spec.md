@@ -9,7 +9,7 @@
 - Dashboard 右侧 request 列表必须优先展示未完成项。
 - `finished` request 必须稳定排在未完成 request 后面。
 - 同一组内保持 API 返回的原始顺序，避免刷新后列表无意义跳动。
-- 只调整前端展示顺序，不改变 `.codex-auto-dev/state/requests.tsv`、dashboard API 数据或状态机语义。
+- 只调整前端展示顺序，不改变 `.sandrone/state/requests.tsv`、dashboard API 数据或状态机语义。
 
 ## 非目标
 

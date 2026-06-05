@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "request_id": "{{request_id}}",
+  "kind": "request_decomposition",
+  "classification": {
+    "slice_strategy": "single-or-dag",
+    "reasons": [],
+    "estimated_modules": [],
+    "estimated_acceptance_points": 0,
+    "force_single_slice_if_small": true
+  },
+  "slices": [
+    {
+      "id": "S01",
+      "name": "example-foundation",
+      "status": "draft",
+      "type": "foundation",
+      "summary": "Replace this example slice with the real first slice.",
+      "depends_on": [],
+      "parallel_group": "foundation",
+      "conflict_domains": [],
+      "inputs": [],
+      "outputs": [],
+      "acceptance": [],
+      "tests": [],
+      "docs": [],
+      "branch": "codex/{{request_id_lower}}-s01-example-foundation",
+      "worktree": ""
+    }
+  ],
+  "global_invariants": [
+    {
+      "id": "INV-001",
+      "name": "requirement-mapping",
+      "applies_to": ["S01"],
+      "required_evidence": ["Every original requirement maps to at least one slice in decomposition.md."]
+    }
+  ],
+  "updated_at": "{{updated_at}}"
+}

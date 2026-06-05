@@ -1,10 +1,24 @@
-# 变更文档: {{request_id}}
+# 变更文档: {{request_id}} {{title}}
 
 这是变更文档模板。Codex 必须在实现完成后、请求审批前填写真实内容。本文档的重点是解释需求如何被实现，而不是完整罗列所有文件变更。
 
+## 导航
+
+- 上级索引: 请从当前 slice index 进入本文档，保持 `project -> parent request index -> slice index -> stage documents` 的主链路。
+- Relations: `obsidian/relations.md`
+- Request / Plan: {{request_wikilink}}
+- Approved plan: {{plan_wikilink}}
+- Decomposition: {{decomposition_wikilink}}
+- Agent journal: {{agent_journal_wikilink}}
+- CodeGraph context: `obsidian/codegraph/context.md`
+- Format check: [[checks/format-check|checks/format-check.md]]
+- Review details: [[reviews]]
+
+本节只保留链接和短说明，不复制完整 plan、完整 reviewer JSON 或长篇文件清单。
+
 ## 摘要
 
-用几句话说明实际完成了什么、用户可见变化是什么、是否偏离已批准计划，以及是否存在剩余风险。
+用几句话说明实际完成了什么、用户可见变化是什么、是否偏离已批准计划/拆解，以及是否存在剩余风险。
 
 ## 实现前后对比
 
@@ -25,7 +39,7 @@
 - 目标项目 change doc: 填写路径或 `Not required`，并说明原因。
 - Pre-commit: 填写命令和结果，或 `Not required`。
 - 文档检查: 填写命令和结果，或 `Not required`。
-- Format/lint/test: 填写命令和结果。
+- Format/lint/test: 填写命令和结果，必须包含 `tools/check-format.sh --format` 与 `tools/check-format.sh --check` 的通过、失败修复或明确 skip 证据。
 - AI review: 填写发现、处理状态，或 `Not required`。
 - 所有目标项目内部要求是否完成: 填写 yes/no 和阻塞项。
 
@@ -44,10 +58,12 @@
 
 填写准确命令、输出摘要、失败修复过程和人工验证证据。日志、错误、commit hash、测试输出保持原文。
 
+必须记录格式门禁结果: `tools/check-format.sh --check` 通过或明确 skip；如曾失败，引用 `checks/format-check.md` 并说明修复方式。
+
 ## Review 结果
 
 尚未产生 review 结果。
 
 ## 审批门禁
 
-填写完成后等待 wrapper hook 调用外层 `codex-auto-dev advance` 提交 change-doc gate 并运行 code-review。审批通过前不得运行 `codex-auto-dev finish --request_id {{request_id}}`，也不得 commit、push、创建 PR 或 merge。
+填写完成后等待 wrapper hook 调用外层 `sandrone advance` 提交 change-doc gate 并运行 code-review。审批通过前不得运行 `sandrone finish --request_id {{request_id}}`，也不得 commit、push、创建 PR 或 merge。

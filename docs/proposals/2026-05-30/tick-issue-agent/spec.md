@@ -6,11 +6,11 @@
 
 ## 用户目标
 
-新增 `codex-auto-dev tick`。一次 tick 先更新 issue，再刷新已结束 agent 状态，然后为所有可处理 request 生成简洁 change 文档包，并分别调用 `tools/issue-agent.sh` 异步启动 Codex CLI 子运行。每个子运行负责从 plan 写到 implementation，并在内部根据 `plan-review` / `code-review` 最多修复 20 轮。自动流程默认停在 change-doc approval 通过后，等待用户决定是否 `finish`。
+新增 `sandrone tick`。一次 tick 先更新 issue，再刷新已结束 agent 状态，然后为所有可处理 request 生成简洁 change 文档包，并分别调用 `tools/issue-agent.sh` 异步启动 Codex CLI 子运行。每个子运行负责从 plan 写到 implementation，并在内部根据 `plan-review` / `code-review` 最多修复 20 轮。自动流程默认停在 change-doc approval 通过后，等待用户决定是否 `finish`。
 
 ## 功能要求
 
-- 新增 `codex-auto-dev tick`。
+- 新增 `sandrone tick`。
 - 支持 `--request_id <REQ>` 精确派发一个 request。
 - 支持 `--max-attempts <N>`，默认 `20`，传给 issue agent。
 - tick 必须先运行 issue update。
@@ -34,8 +34,8 @@
 - `change-doc.md` 必须包含最终 review 结果摘要。
 - 默认 connector 必须写明稳定输入输出契约，保证 issue-agent prompt 不依赖某个平台的字段格式。
 - review JSON 细节放到 `reviews/<stage>/details/`，summary 放到 `reviews/<stage>/summary.json`。
-- 超过最大 review 修复轮数时，issue agent 必须调用 `codex-auto-dev block` 标记阻塞，并生成 `recovery.md`。
-- 新增 `codex-auto-dev resume --request_id <REQ>`，用于快速输出恢复入口。
+- 超过最大 review 修复轮数时，issue agent 必须调用 `sandrone block` 标记阻塞，并生成 `recovery.md`。
+- 新增 `sandrone resume --request_id <REQ>`，用于快速输出恢复入口。
 
 ## 非目标
 

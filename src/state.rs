@@ -72,8 +72,8 @@ pub(crate) fn load_requests() -> Result<Vec<Request>> {
 }
 
 pub(crate) fn save_requests(requests: &[Request]) -> Result<()> {
-    fs::create_dir_all(".codex-auto-dev/state")?;
-    let mut content = String::from("# codex-auto-dev requests v2\n");
+    fs::create_dir_all(".sandrone/state")?;
+    let mut content = String::from("# Sandrone requests v2\n");
     for request in requests {
         content.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -93,6 +93,7 @@ pub(crate) fn save_requests(requests: &[Request]) -> Result<()> {
         ));
     }
     fs::write(STATE_PATH, content)?;
+    sync_obsidian_project_note(requests)?;
     Ok(())
 }
 
@@ -125,7 +126,7 @@ pub(crate) fn load_sessions() -> Result<Vec<SessionRecord>> {
 }
 
 pub(crate) fn save_sessions(sessions: &[SessionRecord]) -> Result<()> {
-    fs::create_dir_all(".codex-auto-dev")?;
+    fs::create_dir_all(".sandrone")?;
     let mut content = String::from("{\n  \"schema_version\": 1,\n  \"sessions\": [\n");
     for (index, session) in sessions.iter().enumerate() {
         if index > 0 {
@@ -192,10 +193,10 @@ pub(crate) fn upsert_session_for_request(
 }
 
 pub(crate) fn update_gate_session(request: &Request, gate: &str, status: &str) -> Result<()> {
-    let phase = if gate == "plan" {
-        "planning"
-    } else {
-        "implementation"
+    let phase = match gate {
+        "decomposition" => "decomposition",
+        "plan" => "planning",
+        _ => "implementation",
     };
     upsert_session_for_request(request, phase, status)
 }
@@ -232,12 +233,34 @@ pub(crate) fn write_status_json(
     status: &str,
     reason: &str,
 ) -> Result<()> {
+    write_status_json_with_gate_update(request, stage, status, reason, None)
+}
+
+fn write_status_json_with_gate_update(
+    request: &Request,
+    stage: &str,
+    status: &str,
+    reason: &str,
+    gate_update: Option<(String, String)>,
+) -> Result<()> {
     ensure_change_packet(request)?;
     let review_cycle = review_cycle_for_status(request).unwrap_or(0);
+    let request_artifact = request_handoff_artifact_path_string(request, "request.md");
+    let decomposition_artifact = request_handoff_artifact_path_string(request, "decomposition.md");
+    let dag_artifact = request_handoff_artifact_path_string(request, "dag.json");
+    let plan_artifact = request_handoff_artifact_path_string(request, "plan.md");
+    let change_doc_artifact = request_handoff_artifact_path_string(request, "change-doc.md");
+    let pr_doc_artifact = request_handoff_artifact_path_string(request, "pr-doc.md");
+    let format_check_artifact = Path::new(&request.change_path)
+        .join("checks/format-check.md")
+        .to_string_lossy()
+        .to_string();
+    let agent_journal_artifact = request_handoff_artifact_path_string(request, "agent-journal.md");
+    let gates = render_status_gate_records(request, gate_update)?;
     fs::write(
-        Path::new(&request.change_path).join("status.json"),
+        status_json_path(request),
         format!(
-            "{{\n  \"schema_version\": 1,\n  \"request_id\": \"{}\",\n  \"stage\": \"{}\",\n  \"current_phase\": \"{}\",\n  \"status\": \"{}\",\n  \"reason\": \"{}\",\n  \"return_to_phase_reason\": \"{}\",\n  \"review_cycle\": {},\n  \"handoff_artifacts\": {{\n    \"request\": \"{}/request.md\",\n    \"plan\": \"{}/plan.md\",\n    \"change_doc\": \"{}/change-doc.md\",\n    \"agent_journal\": \"{}/agent-journal.md\"\n  }},\n  \"branch\": \"{}\",\n  \"worktree\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
+            "{{\n  \"schema_version\": 1,\n  \"request_id\": \"{}\",\n  \"stage\": \"{}\",\n  \"current_phase\": \"{}\",\n  \"status\": \"{}\",\n  \"reason\": \"{}\",\n  \"return_to_phase_reason\": \"{}\",\n  \"review_cycle\": {},\n  \"gates\": [\n{}\n  ],\n  \"handoff_artifacts\": {{\n    \"request\": \"{}\",\n    \"decomposition\": \"{}\",\n    \"dag\": \"{}\",\n    \"plan\": \"{}\",\n    \"change_doc\": \"{}\",\n    \"pr_doc\": \"{}\",\n    \"format_check\": \"{}\",\n    \"agent_journal\": \"{}\",\n    \"codegraph_context\": \"obsidian/codegraph/context.md\",\n    \"obsidian_project\": \"obsidian/project.md\",\n    \"obsidian_note\": \"{}\"\n  }},\n  \"branch\": \"{}\",\n  \"worktree\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
             json_escape(&request.request_id),
             json_escape(stage),
             json_escape(status),
@@ -245,23 +268,64 @@ pub(crate) fn write_status_json(
             json_escape(reason),
             json_escape(reason),
             review_cycle,
-            json_escape(&request.change_path),
-            json_escape(&request.change_path),
-            json_escape(&request.change_path),
-            json_escape(&request.change_path),
+            gates,
+            json_escape(&request_artifact),
+            json_escape(&decomposition_artifact),
+            json_escape(&dag_artifact),
+            json_escape(&plan_artifact),
+            json_escape(&change_doc_artifact),
+            json_escape(&pr_doc_artifact),
+            json_escape(&format_check_artifact),
+            json_escape(&agent_journal_artifact),
+            json_escape(&obsidian_request_note_path(request).display().to_string()),
             json_escape(&request.branch),
             json_escape(&request.worktree_path),
             json_escape(&now_string()),
         ),
     )?;
+    sync_obsidian_request_note(request)?;
     Ok(())
 }
 
+fn status_json_path(request: &Request) -> PathBuf {
+    Path::new(&request.change_path).join("status.json")
+}
+
+fn render_status_gate_records(
+    request: &Request,
+    gate_update: Option<(String, String)>,
+) -> Result<String> {
+    let mut records = BTreeMap::<String, String>::new();
+    if let Ok(content) = fs::read_to_string(status_json_path(request)) {
+        for gate in ["decomposition", "plan", "change-doc"] {
+            if let Some(record) = status_gate_record_from_content(&content, gate) {
+                records.insert(gate.to_string(), record);
+            }
+        }
+    }
+    if let Some((gate, record)) = gate_update {
+        records.insert(gate, record);
+    }
+    Ok(records.into_values().collect::<Vec<_>>().join(",\n"))
+}
+
+fn status_gate_record_from_content(content: &str, gate: &str) -> Option<String> {
+    let needle = format!("\"gate\": \"{gate}\"");
+    content
+        .lines()
+        .find(|line| line.contains(&needle))
+        .map(|line| line.trim().trim_end_matches(',').to_string())
+}
+
 pub(crate) fn review_cycle_for_status(request: &Request) -> Result<u32> {
+    let decomposition_attempts = review_attempt_count(request, "decomposition-review")?;
     let plan_attempts = review_attempt_count(request, "plan-review")?;
     let code_attempts = review_attempt_count(request, "code-review")?;
     let integration_attempts = review_attempt_count(request, "integration-review")?;
-    Ok(plan_attempts.max(code_attempts).max(integration_attempts))
+    Ok(decomposition_attempts
+        .max(plan_attempts)
+        .max(code_attempts)
+        .max(integration_attempts))
 }
 
 pub(crate) fn append_event(
@@ -271,7 +335,7 @@ pub(crate) fn append_event(
     status: &str,
     detail: &str,
 ) -> Result<()> {
-    fs::create_dir_all(".codex-auto-dev/state")?;
+    fs::create_dir_all(".sandrone/state")?;
     let line = format!(
         "{{\"time\": \"{}\", \"event\": \"{}\", \"request_id\": \"{}\", \"phase\": \"{}\", \"status\": \"{}\", \"detail\": \"{}\"}}\n",
         json_escape(&now_string()),
@@ -303,7 +367,9 @@ pub(crate) fn mark_blocked(
     save_requests(requests)?;
     write_status_json(request, stage, "blocked", reason)?;
     write_recovery_doc(request, stage, reason)?;
-    let phase = if stage == "planning" {
+    let phase = if stage == "decomposition" {
+        "decomposition"
+    } else if stage == "planning" {
         "planning"
     } else if stage == "rebase" {
         "rebase"
@@ -315,6 +381,10 @@ pub(crate) fn mark_blocked(
 }
 
 pub(crate) fn write_recovery_doc(request: &Request, stage: &str, reason: &str) -> Result<()> {
+    let request_artifact = request_handoff_artifact_path_string(request, "request.md");
+    let plan_artifact = request_handoff_artifact_path_string(request, "plan.md");
+    let change_doc_artifact = request_handoff_artifact_path_string(request, "change-doc.md");
+    let agent_journal_artifact = request_handoff_artifact_path_string(request, "agent-journal.md");
     let plan_summary = Path::new(&request.change_path)
         .join("reviews/plan-review/summary.json")
         .display()
@@ -324,13 +394,17 @@ pub(crate) fn write_recovery_doc(request: &Request, stage: &str, reason: &str) -
         .display()
         .to_string();
     fs::write(
-        Path::new(&request.change_path).join("recovery.md"),
+        request_artifact_path_buf(request, "recovery.md"),
         format!(
-            "# 恢复指南: {request_id}\n\n## 当前状态\n\n- Stage: `{stage}`\n- Status: `blocked`\n- Reason: {reason}\n\n## 关键路径\n\n- Request: `{change_path}/request.md`\n- Plan: `{change_path}/plan.md`\n- Change doc: `{change_path}/change-doc.md`\n- Agent journal: `{change_path}/agent-journal.md`\n- Status: `{change_path}/status.json`\n- Plan review summary: `{plan_summary}`\n- Code review summary: `{code_summary}`\n- Worktree: `{worktree}`\n- Branch: `{branch}`\n\n## 推荐恢复步骤\n\n1. 阅读 `request.md`、`plan.md`、`change-doc.md`、`agent-journal.md` 和本文件。\n2. 查看最后一轮 review summary 和 details，优先处理 critical/high。\n3. 如果需要继续自动修复，运行 `codex-auto-dev tick --request_id {request_id}`。\n4. 如果 reviewer 明显误判，人工审批必须写明 comment 和来源。\n",
+            "# 恢复指南: {request_id}\n\n## 当前状态\n\n- Stage: `{stage}`\n- Status: `blocked`\n- Reason: {reason}\n\n## 关键路径\n\n- Request: `{request_artifact}`\n- Plan: `{plan_artifact}`\n- Change doc: `{change_doc_artifact}`\n- Agent journal: `{agent_journal_artifact}`\n- Status: `{change_path}/status.json`\n- Plan review summary: `{plan_summary}`\n- Code review summary: `{code_summary}`\n- Worktree: `{worktree}`\n- Branch: `{branch}`\n\n## 推荐恢复步骤\n\n1. 阅读 request、plan、change-doc、agent-journal 和本文件。\n2. 查看最后一轮 review summary 和 details，优先处理 critical/high。\n3. 如果需要继续自动修复，运行 `sandrone tick --request_id {request_id}`。\n4. 如果 reviewer 明显误判，人工审批必须写明 comment 和来源。\n",
             request_id = request.request_id,
             stage = stage,
             reason = reason,
             change_path = request.change_path,
+            request_artifact = request_artifact,
+            plan_artifact = plan_artifact,
+            change_doc_artifact = change_doc_artifact,
+            agent_journal_artifact = agent_journal_artifact,
             plan_summary = plan_summary,
             code_summary = code_summary,
             worktree = fallback_empty(&request.worktree_path, "not started"),
@@ -353,69 +427,187 @@ pub(crate) fn write_approval_record(
     if !artifact.exists() {
         return Err(format!("approval artifact does not exist: {}", artifact.display()).into());
     }
-    let approval_path = approval_file_path(request, gate);
-    fs::create_dir_all(
-        approval_path
-            .parent()
-            .ok_or("approval path has no parent directory")?,
-    )?;
     let now = now_string();
     let artifact_string = artifact.to_string_lossy();
     let artifact_sha256 = file_sha256(&artifact)?;
-    let decisions = if by.is_empty() {
-        String::from("")
-    } else {
-        format!(
-            "\n    {{ \"decision\": \"{}\", \"by\": \"{}\", \"source\": \"{}\", \"comment\": \"{}\", \"decided_at\": \"{}\" }}\n  ",
-            json_escape(status),
-            json_escape(by),
-            json_escape(source),
-            json_escape(comment),
-            json_escape(&now),
-        )
-    };
-    fs::write(
-        approval_path,
-        format!(
-            "{{\n  \"schema_version\": 1,\n  \"request_id\": \"{}\",\n  \"gate\": \"{}\",\n  \"status\": \"{}\",\n  \"artifact\": \"{}\",\n  \"artifact_sha256\": \"{}\",\n  \"required_approvals\": 1,\n  \"decisions\": [{}],\n  \"submitted_at\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
-            json_escape(&request.request_id),
-            json_escape(gate),
-            json_escape(status),
-            json_escape(&artifact_string),
-            json_escape(&artifact_sha256),
-            decisions,
-            json_escape(&now),
-            json_escape(&now),
-        ),
-    )?;
+    let record = format!(
+        "    {{ \"gate\": \"{}\", \"status\": \"{}\", \"artifact\": \"{}\", \"artifact_sha256\": \"{}\", \"by\": \"{}\", \"source\": \"{}\", \"comment\": \"{}\", \"updated_at\": \"{}\" }}",
+        json_escape(gate),
+        json_escape(status),
+        json_escape(&artifact_string),
+        json_escape(&artifact_sha256),
+        json_escape(by),
+        json_escape(source),
+        json_escape(comment),
+        json_escape(&now),
+    );
+    write_status_json_with_gate_update(
+        request,
+        gate_stage(gate),
+        &request.status,
+        comment,
+        Some((gate.to_string(), record)),
+    )
+}
+
+fn gate_stage(gate: &str) -> &'static str {
+    match gate {
+        "decomposition" => "decomposition",
+        "plan" => "planning",
+        "change-doc" => "implementation",
+        _ => "approval",
+    }
+}
+
+fn status_gate_record(request: &Request, gate: &str) -> Option<String> {
+    fs::read_to_string(status_json_path(request))
+        .ok()
+        .and_then(|content| status_gate_record_from_content(&content, gate))
+        .or_else(|| legacy_approval_record(request, gate))
+}
+
+fn legacy_approval_record(request: &Request, gate: &str) -> Option<String> {
+    let content = fs::read_to_string(approval_file_path(request, gate)).ok()?;
+    Some(format!(
+        "{{ \"gate\": \"{}\", \"status\": \"{}\", \"artifact\": \"{}\", \"artifact_sha256\": \"{}\", \"by\": \"legacy-gate-migration\", \"source\": \"legacy-gate-migration\", \"comment\": \"migrated from legacy gate directory\", \"updated_at\": \"{}\" }}",
+        json_escape(gate),
+        json_escape(&json_value(&content, "status").unwrap_or_default()),
+        json_escape(&json_value(&content, "artifact").unwrap_or_default()),
+        json_escape(&json_value(&content, "artifact_sha256").unwrap_or_default()),
+        json_escape(&json_value(&content, "updated_at").unwrap_or_default()),
+    ))
+}
+
+pub(crate) fn migrate_legacy_approval_records(request: &Request) -> Result<()> {
+    for gate in ["decomposition", "plan", "change-doc"] {
+        let Some(record) = legacy_approval_record(request, gate) else {
+            continue;
+        };
+        let status = json_value(&record, "status").unwrap_or_default();
+        write_status_json_with_gate_update(
+            request,
+            gate_stage(gate),
+            fallback_empty(&request.status, &status),
+            "migrated legacy approval record",
+            Some((gate.to_string(), format!("    {record}"))),
+        )?;
+    }
     Ok(())
+}
+
+pub(crate) fn normalize_legacy_gate_records(request: &Request, dry_run: bool) -> Result<()> {
+    let Ok(content) = fs::read_to_string(status_json_path(request)) else {
+        return Ok(());
+    };
+    let stage = fallback_empty(
+        &json_value(&content, "stage").unwrap_or_default(),
+        "unknown",
+    )
+    .to_string();
+    let status = fallback_empty(
+        &json_value(&content, "status").unwrap_or_default(),
+        &request.status,
+    )
+    .to_string();
+    let reason = fallback_empty(
+        &json_value(&content, "reason").unwrap_or_default(),
+        "normalized legacy gate records",
+    )
+    .to_string();
+    for gate in ["decomposition", "plan", "change-doc"] {
+        let Some(record) = status_gate_record_from_content(&content, gate) else {
+            continue;
+        };
+        let by = json_value(&record, "by").unwrap_or_default();
+        let source = json_value(&record, "source").unwrap_or_default();
+        let artifact = json_value(&record, "artifact").unwrap_or_default();
+        let artifact_path = Path::new(&artifact);
+        if by != "legacy-approval" && source != "approvals" && artifact_path.exists() {
+            continue;
+        }
+        let gate_status = json_value(&record, "status").unwrap_or_default();
+        let artifact_path = approval_artifact_path(request, gate);
+        if !artifact_path.exists() {
+            continue;
+        }
+        let artifact_sha256 = file_sha256(&artifact_path)?;
+        let normalized = format!(
+            "    {{ \"gate\": \"{}\", \"status\": \"{}\", \"artifact\": \"{}\", \"artifact_sha256\": \"{}\", \"by\": \"legacy-gate-migration\", \"source\": \"legacy-gate-migration\", \"comment\": \"normalized from legacy gate record during upgrade\", \"updated_at\": \"{}\" }}",
+            json_escape(gate),
+            json_escape(&gate_status),
+            json_escape(&artifact_path.to_string_lossy()),
+            json_escape(&artifact_sha256),
+            json_escape(&now_string()),
+        );
+        if dry_run {
+            println!(
+                "Would normalize legacy gate record for {} {}",
+                request.request_id, gate
+            );
+        } else {
+            write_status_json_with_gate_update(
+                request,
+                &stage,
+                &status,
+                &reason,
+                Some((gate.to_string(), normalized)),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_legacy_approvals_dir(request: &Request, dry_run: bool) -> Result<()> {
+    let approvals_dir = Path::new(&request.change_path).join("approvals");
+    if !approvals_dir.exists() {
+        return Ok(());
+    }
+    if dry_run {
+        println!(
+            "Would remove {} (approval gate records will be moved into status.json)",
+            approvals_dir.display()
+        );
+    } else {
+        fs::remove_dir_all(&approvals_dir)?;
+        println!(
+            "Removed {} (approval gate records moved into status.json)",
+            approvals_dir.display()
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn render_gate_record_json(request: &Request, gate: &str) -> Result<String> {
+    validate_gate(gate)?;
+    Ok(status_gate_record(request, gate).unwrap_or_else(|| {
+        format!(
+            "{{ \"gate\": \"{}\", \"status\": \"missing\" }}",
+            json_escape(gate),
+        )
+    }))
 }
 
 pub(crate) fn ensure_gate_approved(request: &Request, gate: &str) -> Result<()> {
     validate_gate(gate)?;
     ensure_change_packet(request)?;
-    let approval_path = approval_file_path(request, gate);
-    if !approval_path.exists() {
-        return Err(format!(
-            "{gate} approval required. Run: codex-auto-dev submit --request_id {} --gate {gate}; then codex-auto-dev approve --request_id {} --gate {gate} --by <actor>",
-            request.request_id, request.request_id
-        )
-        .into());
-    }
-    let content = fs::read_to_string(&approval_path)?;
-    let status = json_value(&content, "status").unwrap_or_default();
+    let Some(record) = status_gate_record(request, gate) else {
+        return Err(
+            format!("{gate} gate approval required. Current gate status is `missing`.").into(),
+        );
+    };
+    let status = json_value(&record, "status").unwrap_or_default();
     if status != "approved" {
         return Err(format!(
-            "{gate} approval required. Current approval status is `{}`.",
+            "{gate} gate approval required. Current gate status is `{}`.",
             fallback_empty(&status, "missing")
         )
         .into());
     }
-    let approved_hash = json_value(&content, "artifact_sha256").unwrap_or_default();
+    let approved_hash = json_value(&record, "artifact_sha256").unwrap_or_default();
     let current_hash = file_sha256(&approval_artifact_path(request, gate))?;
     if approved_hash != current_hash {
         return Err(format!(
-            "{gate} approval is stale: approved artifact hash does not match current artifact"
+            "{gate} gate approval is stale: approved artifact hash does not match current artifact"
         )
         .into());
     }
@@ -429,11 +621,15 @@ pub(crate) fn approval_file_path(request: &Request, gate: &str) -> std::path::Pa
 }
 
 pub(crate) fn approval_artifact_path(request: &Request, gate: &str) -> std::path::PathBuf {
-    Path::new(&request.change_path).join(approval_artifact_name(gate).unwrap_or("plan.md"))
+    existing_or_preferred_request_artifact_path(
+        request,
+        approval_artifact_name(gate).unwrap_or("plan.md"),
+    )
 }
 
 pub(crate) fn approval_artifact_name(gate: &str) -> Result<&'static str> {
     match gate {
+        "decomposition" => Ok("decomposition.md"),
         "plan" => Ok("plan.md"),
         "change-doc" => Ok("change-doc.md"),
         _ => Err(format!("unsupported approval gate: {gate}").into()),
@@ -442,6 +638,7 @@ pub(crate) fn approval_artifact_name(gate: &str) -> Result<&'static str> {
 
 pub(crate) fn gate_status_prefix(gate: &str) -> &str {
     match gate {
+        "decomposition" => "decomposition",
         "plan" => "plan",
         "change-doc" => "change-doc",
         _ => "approval",
@@ -451,7 +648,7 @@ pub(crate) fn gate_status_prefix(gate: &str) -> &str {
 pub(crate) fn ensure_change_packet(request: &Request) -> Result<()> {
     if request.change_path.is_empty() {
         return Err(format!(
-            "{} has no change packet. Run codex-auto-dev plan first.",
+            "{} has no change packet. Run sandrone plan first.",
             request.request_id
         )
         .into());

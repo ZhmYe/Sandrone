@@ -32,7 +32,7 @@
 
 - `src/main.rs`: 更新默认 issue-agent、plan-agent 和 implementation-agent prompt。
 - `tests/cli_flow.rs`: 增加默认 prompt 生成断言。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: 增加 `issue-agent` 职责说明和 self-check 规则。
+- `README.md`、`skills/sandrone/SKILL.md`: 增加 `issue-agent` 职责说明和 self-check 规则。
 - `docs/proposals/2026-05-31/agent-review-preflight-self-check/`: 新增本次 proposal 文档。
 - `proposal.json`: 登记本次 proposal。
 

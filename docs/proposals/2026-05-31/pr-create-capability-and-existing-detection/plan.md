@@ -13,7 +13,7 @@
 
 - `src/main.rs`: `DeliveryResult`、`run_pr_tool`、默认 `pr-create.sh`。
 - `tests/cli_flow.rs`: 默认脚本契约断言和 existing PR finish 测试。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: connector contract。
+- `README.md`、`skills/sandrone/SKILL.md`: connector contract。
 - `docs/proposals/2026-05-31/pr-create-capability-and-existing-detection/`: 本次变更记录。
 
 ## 设计说明

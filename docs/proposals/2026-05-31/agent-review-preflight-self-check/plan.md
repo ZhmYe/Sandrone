@@ -14,13 +14,13 @@
 - `src/main.rs`: 修改默认 prompt 生成函数。
 - `tests/cli_flow.rs`: 增加默认 prompt 内容断言。
 - `README.md`: 补充 `issue-agent` 解释和提交前自检说明。
-- `skills/codex-auto-dev-workflow/SKILL.md`: 补充 agent 要求。
+- `skills/sandrone/SKILL.md`: 补充 agent 要求。
 - `proposal.json`: 登记本次 proposal。
 
 ## 风险
 
 - 这是 prompt 和文档层面的收紧，不改变状态机，兼容现有 workspace。
-- 旧 workspace 只有在运行 `codex-auto-dev upgrade --default` 或手动复制 `.example` 后才会替换正式 prompt。
+- 旧 workspace 只有在运行 `sandrone upgrade --default` 或手动复制 `.example` 后才会替换正式 prompt。
 - 如果用户自定义了 prompt，普通 `upgrade` 只会更新 `.example`，不会覆盖用户文件。
 
 ## 验证

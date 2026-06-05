@@ -1,19 +1,25 @@
 mod assets;
+mod codegraph;
 mod dashboard;
 mod defaults;
 mod delivery;
 mod doctor;
+mod obsidian;
 mod registry;
 mod review_gate;
+mod slices;
 mod state;
 mod utils;
 
+pub(crate) use codegraph::*;
 pub(crate) use defaults::*;
 pub(crate) use delivery::deliver_finished_request;
 pub(crate) use doctor::doctor;
+pub(crate) use obsidian::*;
 pub(crate) use review_gate::{
-    code_review, integration_review, plan_review, review_diagnostic_excerpt,
+    code_review, decomposition_review, integration_review, plan_review, review_diagnostic_excerpt,
 };
+pub(crate) use slices::*;
 pub(crate) use state::*;
 pub(crate) use utils::*;
 
@@ -29,10 +35,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const CONFIG_PATH: &str = ".codex-auto-dev/config.toml";
-const STATE_PATH: &str = ".codex-auto-dev/state/requests.tsv";
-const EVENTS_PATH: &str = ".codex-auto-dev/state/events.ndjson";
-const SESSIONS_PATH: &str = ".codex-auto-dev/sessions.json";
+const CONFIG_PATH: &str = ".sandrone/config.toml";
+const STATE_PATH: &str = ".sandrone/state/requests.tsv";
+const EVENTS_PATH: &str = ".sandrone/state/events.ndjson";
+const SESSIONS_PATH: &str = ".sandrone/sessions.json";
+const LOCAL_STATE_DIR: &str = ".sandrone";
+const LEGACY_LOCAL_STATE_DIR: &str = ".codex-auto-dev";
 const GLOBAL_WORKSPACES_FILE: &str = "workspaces.json";
 const FRAMEWORK_SCHEMA_VERSION: u32 = 3;
 const DEV_REPO: &str = "dev/repo";
@@ -42,15 +50,19 @@ const ISSUE_AGENT_TOOL: &str = "tools/issue-agent.sh";
 const REBASE_AGENT_TOOL: &str = "tools/rebase-agent.sh";
 const PR_TOOL: &str = "tools/pr-create.sh";
 const PR_STATUS_TOOL: &str = "tools/pr-status.sh";
+const CHECK_FORMAT_TOOL: &str = "tools/check-format.sh";
 const PLAN_REVIEW_TOOL: &str = "tools/plan-review.sh";
+const DECOMPOSITION_REVIEW_TOOL: &str = "tools/decomposition-review.sh";
 const TEST_REVIEW_TOOL: &str = "tools/test-review.sh";
 const DESIGN_REVIEW_TOOL: &str = "tools/design-review.sh";
 const INTEGRATION_REVIEW_TOOL: &str = "tools/integration-review.sh";
 const ISSUE_AGENT_PROMPT: &str = "tools/prompts/issue-agent.md";
+const DECOMPOSITION_AGENT_PROMPT: &str = "tools/prompts/decomposition-agent.md";
 const PLAN_AGENT_PROMPT: &str = "tools/prompts/plan-agent.md";
 const IMPLEMENTATION_AGENT_PROMPT: &str = "tools/prompts/implementation-agent.md";
 const REBASE_AGENT_PROMPT: &str = "tools/prompts/rebase-agent.md";
 const PLAN_REVIEW_PROMPT: &str = "tools/prompts/plan-reviewer.md";
+const DECOMPOSITION_REVIEW_PROMPT: &str = "tools/prompts/decomposition-reviewer.md";
 const TEST_REVIEW_PROMPT: &str = "tools/prompts/test-reviewer.md";
 const DESIGN_REVIEW_PROMPT: &str = "tools/prompts/design-reviewer.md";
 const INTEGRATION_REVIEW_PROMPT: &str = "tools/prompts/integration-reviewer.md";
@@ -60,23 +72,31 @@ const ISSUE_AGENT_TOOL_EXAMPLE: &str = "tools/issue-agent.example.sh";
 const REBASE_AGENT_TOOL_EXAMPLE: &str = "tools/rebase-agent.example.sh";
 const PR_TOOL_EXAMPLE: &str = "tools/pr-create.example.sh";
 const PR_STATUS_TOOL_EXAMPLE: &str = "tools/pr-status.example.sh";
+const CHECK_FORMAT_TOOL_EXAMPLE: &str = "tools/check-format.example.sh";
 const PLAN_REVIEW_TOOL_EXAMPLE: &str = "tools/plan-review.example.sh";
+const DECOMPOSITION_REVIEW_TOOL_EXAMPLE: &str = "tools/decomposition-review.example.sh";
 const TEST_REVIEW_TOOL_EXAMPLE: &str = "tools/test-review.example.sh";
 const DESIGN_REVIEW_TOOL_EXAMPLE: &str = "tools/design-review.example.sh";
 const INTEGRATION_REVIEW_TOOL_EXAMPLE: &str = "tools/integration-review.example.sh";
 const ISSUE_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/issue-agent.example.md";
+const DECOMPOSITION_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/decomposition-agent.example.md";
 const PLAN_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/plan-agent.example.md";
 const IMPLEMENTATION_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/implementation-agent.example.md";
 const REBASE_AGENT_PROMPT_EXAMPLE: &str = "tools/prompts/rebase-agent.example.md";
 const PLAN_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/plan-reviewer.example.md";
+const DECOMPOSITION_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/decomposition-reviewer.example.md";
 const TEST_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/test-reviewer.example.md";
 const DESIGN_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/design-reviewer.example.md";
 const INTEGRATION_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/integration-reviewer.example.md";
 const REVIEW_SCHEMA_EXAMPLE: &str = "tools/schemas/review-result.example.schema.json";
-const WORKFLOW_SKILL: &str = "skills/codex-auto-dev-workflow/SKILL.md";
-const WORKFLOW_SKILL_CONTENT: &str = include_str!("../skills/codex-auto-dev-workflow/SKILL.md");
+const WORKFLOW_SKILL: &str = "skills/sandrone/SKILL.md";
+const WORKFLOW_SKILL_CONTENT: &str = include_str!("../skills/sandrone/SKILL.md");
 const DEFAULT_DASHBOARD_HOST: &str = "127.0.0.1";
 const DEFAULT_DASHBOARD_PORT: u16 = 47217;
+const DEFAULT_DECOMPOSITION_MAX_ATTEMPTS: u32 = 5;
+const DEFAULT_PLAN_MAX_ATTEMPTS: u32 = 5;
+const DEFAULT_CODE_MAX_ATTEMPTS: u32 = 20;
+const DEFAULT_INTEGRATION_MAX_ATTEMPTS: u32 = 20;
 const STATUS_WAIT_UPDATE_PR: &str = "wait-update-pr";
 const STATUS_WAIT_FINISH: &str = "wait-finish";
 const STATUS_FINISHED: &str = "finished";
@@ -195,15 +215,6 @@ struct DoctorCheck {
 }
 
 #[derive(Clone, Debug)]
-enum CodegraphInitOutcome {
-    SkippedEmptyRepo,
-    AlreadyInitialized,
-    Initialized,
-    CommandUnavailable(String),
-    Failed(String),
-}
-
-#[derive(Clone, Debug)]
 enum GitPullOutcome {
     Skipped(String),
     AlreadyUpToDate,
@@ -251,6 +262,7 @@ struct ReviewFinding {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AgentPhase {
+    Decomposition,
     Planning,
     Implementation,
     Rebase,
@@ -259,6 +271,7 @@ enum AgentPhase {
 impl AgentPhase {
     fn as_str(self) -> &'static str {
         match self {
+            AgentPhase::Decomposition => "decomposition",
             AgentPhase::Planning => "planning",
             AgentPhase::Implementation => "implementation",
             AgentPhase::Rebase => "rebase",
@@ -267,6 +280,7 @@ impl AgentPhase {
 
     fn running_status(self) -> &'static str {
         match self {
+            AgentPhase::Decomposition => "decomposition-agent-running",
             AgentPhase::Planning => "planning-agent-running",
             AgentPhase::Implementation => "implementation-agent-running",
             AgentPhase::Rebase => "rebase-agent-running",
@@ -275,6 +289,7 @@ impl AgentPhase {
 
     fn prompt_path(self) -> &'static str {
         match self {
+            AgentPhase::Decomposition => DECOMPOSITION_AGENT_PROMPT,
             AgentPhase::Planning => PLAN_AGENT_PROMPT,
             AgentPhase::Implementation => IMPLEMENTATION_AGENT_PROMPT,
             AgentPhase::Rebase => REBASE_AGENT_PROMPT,
@@ -283,7 +298,9 @@ impl AgentPhase {
 
     fn tool_path(self) -> &'static str {
         match self {
-            AgentPhase::Planning | AgentPhase::Implementation => ISSUE_AGENT_TOOL,
+            AgentPhase::Decomposition | AgentPhase::Planning | AgentPhase::Implementation => {
+                ISSUE_AGENT_TOOL
+            }
             AgentPhase::Rebase => REBASE_AGENT_TOOL,
         }
     }
@@ -307,12 +324,15 @@ fn run() -> Result<()> {
         "tick" => tick(&args),
         "advance" => advance_request(&args),
         "doctor" => doctor(&args),
+        "obsidian-refresh" => refresh_obsidian_command(&args),
         "plan" => create_plan_packet(&args),
+        "decompose" => create_decomposition_packet(&args),
         "submit" => submit_approval(&args),
         "approve" => decide_approval(&args, "approved"),
         "reject" => decide_approval(&args, "rejected"),
-        "approvals" => show_approvals(&args),
+        "gates" | "approvals" => show_gates(&args),
         "plan-review" => plan_review(&args),
+        "decomposition-review" => decomposition_review(&args),
         "code-review" => code_review(&args),
         "integration-review" => integration_review(&args),
         "start" => start_worktree(&args),
@@ -356,7 +376,7 @@ fn new_workspace(args: &[String]) -> Result<()> {
 fn ensure_not_framework_source_checkout() -> Result<()> {
     if is_framework_source_checkout()? {
         return Err(
-            "refusing to initialize codex-auto-dev source checkout as a managed workspace; run `codex-auto-dev new` from a separate outer directory"
+            "refusing to initialize sandrone source checkout as a managed workspace; run `sandrone new` from a separate outer directory"
                 .into(),
         );
     }
@@ -369,10 +389,10 @@ fn is_framework_source_checkout() -> Result<bool> {
         return Ok(false);
     }
     let cargo_content = fs::read_to_string(cargo_toml)?;
-    Ok(cargo_content.contains("name = \"codex-auto-dev-workflow\"")
+    Ok(cargo_content.contains("name = \"sandrone\"")
         && Path::new("src/main.rs").exists()
         && Path::new("templates").exists()
-        && Path::new("skills/codex-auto-dev-workflow").exists())
+        && Path::new("skills/sandrone").exists())
 }
 
 fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
@@ -394,24 +414,26 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     write_default_pr_status_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
+    write_default_env_files()?;
     write_default_workflow_skill()?;
 
-    println!("Created codex-auto-dev workspace");
+    println!("Created sandrone workspace");
     println!("  mode: clone");
     println!("  workspace naming: arbitrary outer workspace name is OK for cloned repositories");
     println!("  repo: {DEV_REPO}");
     println!("  issue tool: {ISSUE_TOOL}");
     println!("  issue agent: {ISSUE_AGENT_TOOL}");
     println!("  PR tool: {PR_TOOL}");
+    println!("  check tool: {CHECK_FORMAT_TOOL}");
     println!("  review tools: {PLAN_REVIEW_TOOL}, {TEST_REVIEW_TOOL}, {DESIGN_REVIEW_TOOL}");
     println!("  workflow skill: {WORKFLOW_SKILL}");
     if repo_has_commits(DEV_REPO) {
         let codegraph_outcome = ensure_codegraph_initialized(DEV_REPO);
         print_codegraph_init_outcome("  ", &codegraph_outcome);
-        println!("  repository has content: CodeGraph project preview required before planning");
-        println!(
-            "  next: run the codegraph-project-preview skill to generate docs/codegraph/context.md, then wait for a request"
-        );
+        let context_outcome = refresh_codegraph_context(DEV_REPO);
+        print_codegraph_context_outcome("  ", &context_outcome);
+        println!("  repository has content: CodeGraph context should be reviewed before planning");
+        println!("  next: inspect obsidian/codegraph/context.md, then wait for a request");
         append_event(
             "codegraph_init_checked",
             "",
@@ -422,7 +444,7 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     } else {
         println!("  repository is empty: skip CodeGraph until the first user request");
         println!(
-            "  next: wait for a request, then codex-auto-dev plan --name <YYYY-MM-DD-name> --request_id <REQ-0001>"
+            "  next: wait for a request, then sandrone plan --name <YYYY-MM-DD-name> --request_id <REQ-0001>"
         );
     }
     append_event(
@@ -464,9 +486,10 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     write_default_pr_status_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
+    write_default_env_files()?;
     write_default_workflow_skill()?;
 
-    println!("Created codex-auto-dev workspace");
+    println!("Created sandrone workspace");
     println!("  mode: empty");
     println!("  project name: {repo_name}");
     println!("  workspace naming: use an outer workspace directory named {repo_name}-auto-dev");
@@ -475,10 +498,11 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     println!("  issue tool: {ISSUE_TOOL}");
     println!("  issue agent: {ISSUE_AGENT_TOOL}");
     println!("  PR tool: {PR_TOOL}");
+    println!("  check tool: {CHECK_FORMAT_TOOL}");
     println!("  review tools: {PLAN_REVIEW_TOOL}, {TEST_REVIEW_TOOL}, {DESIGN_REVIEW_TOOL}");
     println!("  workflow skill: {WORKFLOW_SKILL}");
     println!(
-        "  next: codex-auto-dev plan --name {}-initial-plan --request_id REQ-0001",
+        "  next: sandrone plan --name {}-initial-plan --request_id REQ-0001",
         today()
     );
     append_event(
@@ -700,7 +724,42 @@ fn advance_request(args: &[String]) -> Result<()> {
     loop {
         if refresh_request_status_by_id(&request_id)? {
             progressed = true;
+            if let Some((request, phase, pid)) =
+                dispatch_next_slice_for_parent(&request_id, max_attempts, &mut preflight)?
+            {
+                println!(
+                    "Advance dispatched {} phase {} pid {}",
+                    request.request_id,
+                    phase.as_str(),
+                    pid
+                );
+                println!("  change path: {}", request.change_path);
+                println!(
+                    "  logs: {} | {}",
+                    agent_stdout_path(&request.request_id).display(),
+                    agent_stderr_path(&request.request_id).display()
+                );
+                break;
+            }
             continue;
+        }
+        if let Some((request, phase, pid)) =
+            dispatch_next_slice_for_parent(&request_id, max_attempts, &mut preflight)?
+        {
+            progressed = true;
+            println!(
+                "Advance dispatched {} phase {} pid {}",
+                request.request_id,
+                phase.as_str(),
+                pid
+            );
+            println!("  change path: {}", request.change_path);
+            println!(
+                "  logs: {} | {}",
+                agent_stdout_path(&request.request_id).display(),
+                agent_stderr_path(&request.request_id).display()
+            );
+            break;
         }
         if let Some((request, phase, pid)) =
             dispatch_next_agent_for_request(&request_id, max_attempts, &mut preflight)?
@@ -755,10 +814,137 @@ fn create_plan_packet(args: &[String]) -> Result<()> {
         println!("  preflight: {note}");
     }
     println!("  change path: {}", request.change_path);
-    println!("  plan template: {}/plan.md", request.change_path);
-    println!("  request: {}/request.md", request.change_path);
+    println!(
+        "  plan template: {}",
+        request_artifact_path_string(&request, "plan.md")
+    );
+    println!(
+        "  request: {}",
+        request_artifact_path_string(&request, "request.md")
+    );
     println!("  Codex or planning agent must fill the plan; outer tick runs review gates.");
     Ok(())
+}
+
+fn refresh_obsidian_command(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &[])?;
+    let requests = load_requests()?;
+    refresh_obsidian_artifacts(&requests)?;
+    println!("Obsidian artifacts refreshed");
+    println!("  project: {OBSIDIAN_PROJECT_NOTE}");
+    println!("  relations: {OBSIDIAN_RELATIONS_NOTE}");
+    println!("  requests: obsidian/derived/requests.json");
+    println!("  slices: obsidian/derived/slices.json");
+    println!("  canvas: {OBSIDIAN_PROJECT_CANVAS}");
+    println!("  bases: obsidian/views/requests.base, obsidian/views/slices.base");
+    Ok(())
+}
+
+fn create_decomposition_packet(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--name", "--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let change_name = flag_value(args, "--name")?;
+    if let Some(change_name) = &change_name {
+        validate_change_name(change_name)?;
+    }
+    let preflight = assess_repository_before_planning()?;
+
+    let mut requests = load_requests()?;
+    let index = match find_request_index(&requests, &request_id) {
+        Some(index) => index,
+        None => {
+            let Some(change_name) = &change_name else {
+                return Err(format!(
+                    "unknown request_id: {request_id}. Use --name <YYYY-MM-DD-short-name> to create a manual decomposition packet."
+                )
+                .into());
+            };
+            requests.push(manual_request(&request_id, change_name));
+            requests.len() - 1
+        }
+    };
+
+    let request = create_decomposition_packet_for_index(
+        &mut requests,
+        index,
+        change_name.as_deref(),
+        &preflight,
+    )?;
+
+    println!("Decomposition packet ready for {}", request.request_id);
+    for note in preflight.notes {
+        println!("  preflight: {note}");
+    }
+    println!("  change path: {}", request.change_path);
+    println!(
+        "  decomposition: {}",
+        request_artifact_path_string(&request, "decomposition.md")
+    );
+    println!(
+        "  decomposition json: {}/decomposition.json",
+        request.change_path
+    );
+    println!("  dag: {}/dag.json", request.change_path);
+    println!(
+        "  next: fill decomposition artifacts, then run sandrone decomposition-review --request_id {}",
+        request.request_id
+    );
+    Ok(())
+}
+
+fn create_decomposition_packet_for_index(
+    requests: &mut [Request],
+    index: usize,
+    change_name: Option<&str>,
+    preflight: &PlanPreflight,
+) -> Result<Request> {
+    let mut request = requests[index].clone();
+    if request.change_path.trim().is_empty() {
+        let Some(change_name) = change_name else {
+            return Err(format!(
+                "{} has no decomposition packet. Run: sandrone decompose --name {}-short-name --request_id {}",
+                request.request_id,
+                today(),
+                request.request_id
+            )
+            .into());
+        };
+        request.change_name = change_name.to_string();
+        request.change_path = change_artifact_path(change_name);
+        request.status = "decomposition".to_string();
+        request.updated_at = now_string();
+        generate_decomposition_packet(&request, preflight)?;
+        write_status_json(
+            &request,
+            "decomposition",
+            "decomposition",
+            "decomposition ready",
+        )?;
+    } else {
+        ensure_decomposition_artifacts(&request)?;
+        request.status = "decomposition".to_string();
+        request.updated_at = now_string();
+        write_status_json(
+            &request,
+            "decomposition",
+            "decomposition",
+            "decomposition ready",
+        )?;
+    }
+
+    requests[index] = request.clone();
+    save_requests(requests)?;
+    upsert_session_for_request(&request, "decomposition", "handoff-ready")?;
+    append_event(
+        "decomposition_packet_created",
+        &request.request_id,
+        "decomposition",
+        &request.status,
+        &format!("change_path={}", request.change_path),
+    )?;
+    Ok(request)
 }
 
 fn create_plan_packet_for_index(
@@ -769,7 +955,7 @@ fn create_plan_packet_for_index(
 ) -> Result<Request> {
     let mut request = requests[index].clone();
     request.change_name = change_name.to_string();
-    request.change_path = format!("docs/changes/{change_name}");
+    request.change_path = change_artifact_path(change_name);
     request.status = "planning".to_string();
     request.updated_at = now_string();
     generate_plan_packet(&request, preflight)?;
@@ -796,19 +982,17 @@ fn submit_approval(args: &[String]) -> Result<()> {
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
     ensure_change_packet(&request)?;
-    write_approval_record(&request, &gate, "submitted", "", "manual-cli", "")?;
     request.status = format!("{}-submitted", gate_status_prefix(&gate));
     request.updated_at = now_string();
+    write_approval_record(&request, &gate, "submitted", "", "manual-cli", "")?;
     requests[index] = request.clone();
     save_requests(&requests)?;
     update_gate_session(&request, &gate, "waiting-approval")?;
 
-    println!("Approval submitted for {request_id}");
+    println!("Gate submitted for {request_id}");
     println!("  gate: {gate}");
-    println!(
-        "  approval: {}",
-        approval_file_path(&request, &gate).display()
-    );
+    println!("  status: {}", request.status);
+    println!("  state: {}/status.json", request.change_path);
     Ok(())
 }
 
@@ -835,24 +1019,21 @@ fn decide_approval(args: &[String], decision: &str) -> Result<()> {
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
     ensure_change_packet(&request)?;
-    write_approval_record(&request, &gate, decision, &by, &source, &comment)?;
     request.status = format!("{}-{decision}", gate_status_prefix(&gate));
     request.updated_at = now_string();
+    write_approval_record(&request, &gate, decision, &by, &source, &comment)?;
     requests[index] = request.clone();
     save_requests(&requests)?;
     update_gate_session(&request, &gate, decision)?;
 
-    println!("Approval decision recorded for {request_id}");
+    println!("Gate decision recorded for {request_id}");
     println!("  gate: {gate}");
     println!("  status: {decision}");
-    println!(
-        "  approval: {}",
-        approval_file_path(&request, &gate).display()
-    );
+    println!("  state: {}/status.json", request.change_path);
     Ok(())
 }
 
-fn show_approvals(args: &[String]) -> Result<()> {
+fn show_gates(args: &[String]) -> Result<()> {
     ensure_initialized()?;
     ensure_allowed_flags(args, &["--request_id", "--request-id", "--gate", "--json"])?;
     let request_id = required_request_id(args)?;
@@ -868,41 +1049,42 @@ fn show_approvals(args: &[String]) -> Result<()> {
     ensure_change_packet(request)?;
 
     let gates = gate.map_or_else(
-        || vec!["plan".to_string(), "change-doc".to_string()],
+        || {
+            vec![
+                "decomposition".to_string(),
+                "plan".to_string(),
+                "change-doc".to_string(),
+            ]
+        },
         |value| vec![value],
     );
     if flag_present(args, "--json") {
         println!("{{");
         println!("  \"request_id\": \"{}\",", json_escape(&request_id));
-        println!("  \"approvals\": [");
+        println!("  \"gates\": [");
         for (index, gate) in gates.iter().enumerate() {
-            let path = approval_file_path(request, gate);
             if index > 0 {
                 println!(",");
             }
-            if path.exists() {
-                let content = fs::read_to_string(path)?;
-                print!("{}", indent_json_object(&content, 4));
-            } else {
-                println!(
-                    "    {{ \"gate\": \"{}\", \"status\": \"missing\" }}",
-                    json_escape(gate)
-                );
-            }
+            print!(
+                "{}",
+                indent_json_object(&render_gate_record_json(request, gate)?, 4)
+            );
         }
         println!();
         println!("  ]");
         println!("}}");
     } else {
         for gate in gates {
-            let path = approval_file_path(request, &gate);
-            let status = if path.exists() {
-                let content = fs::read_to_string(&path)?;
-                json_value(&content, "status").unwrap_or_else(|| "unknown".to_string())
-            } else {
-                "missing".to_string()
-            };
-            println!("{:<10} {:<12} {}", gate, status, path.display());
+            let record = render_gate_record_json(request, &gate)?;
+            let status = json_value(&record, "status").unwrap_or_else(|| "missing".to_string());
+            let artifact = json_value(&record, "artifact").unwrap_or_default();
+            println!(
+                "{:<14} {:<12} {}",
+                gate,
+                status,
+                fallback_empty(&artifact, "n/a")
+            );
         }
     }
     Ok(())
@@ -920,9 +1102,24 @@ fn start_worktree(args: &[String]) -> Result<()> {
 
     if request.change_path.is_empty() {
         return Err(format!(
-            "{} has no change packet. Run: codex-auto-dev plan --name {}-short-name --request_id {}",
+            "{} has no change packet. Run: sandrone plan --name {}-short-name --request_id {}",
             request.request_id,
             today(),
+            request.request_id
+        )
+        .into());
+    }
+    if is_parent_request(&request)
+        && existing_or_preferred_request_artifact_path(&request, "decomposition.md").exists()
+    {
+        ensure_gate_approved(&request, "decomposition").map_err(|error| {
+            format!(
+                "{} requires decomposition gate before direct implementation: {error}",
+                request.request_id
+            )
+        })?;
+        return Err(format!(
+            "{} is a parent request with an approved decomposition. Start a materialized slice request instead.",
             request.request_id
         )
         .into());
@@ -1004,7 +1201,10 @@ fn start_worktree(args: &[String]) -> Result<()> {
     println!("Worktree ready for {}", request.request_id);
     println!("  worktree: {}", request.worktree_path);
     println!("  branch: {}", request.branch);
-    println!("  change doc: {}/change-doc.md", request.change_path);
+    println!(
+        "  change doc: {}",
+        request_artifact_path_string(&request, "change-doc.md")
+    );
     println!("  Codex must implement in the worktree and stop before finish.");
     Ok(())
 }
@@ -1037,7 +1237,6 @@ fn finish_request(args: &[String]) -> Result<()> {
     };
     request.status = next_status.to_string();
     request.updated_at = now_string();
-    let change_path = request.change_path.clone();
     let worktree_path = request.worktree_path.clone();
     let branch = request.branch.clone();
     requests[index] = request.clone();
@@ -1070,7 +1269,10 @@ fn finish_request(args: &[String]) -> Result<()> {
     } else {
         println!("{request_id} remains wait-update-pr.");
     }
-    println!("  change doc: {change_path}/change-doc.md");
+    println!(
+        "  change doc: {}",
+        request_artifact_path_string(&request, "change-doc.md")
+    );
     println!("  worktree: {worktree_path}");
     println!("  branch: {branch}");
     if delivery.committed {
@@ -1222,16 +1424,17 @@ fn pr_refresh_request(args: &[String]) -> Result<()> {
     }
 }
 
-fn start_pr_refresh(request_id: &str, max_attempts: u32) -> Result<()> {
+fn start_pr_refresh(request_id: &str, max_attempts: Option<u32>) -> Result<()> {
     let mut requests = load_requests()?;
     let index = find_request_index(&requests, request_id)
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
     ensure_refreshable_request(&request)?;
     ensure_gate_approved(&request, "change-doc")?;
-    if review_attempts_exhausted(&request, AgentPhase::Rebase, max_attempts)? {
+    let resolved_max_attempts = resolve_max_attempts(AgentPhase::Rebase, max_attempts);
+    if review_attempts_exhausted(&request, AgentPhase::Rebase, resolved_max_attempts)? {
         let reason = format!(
-            "integration-review failed after {max_attempts} attempt(s); manual recovery is required"
+            "integration-review failed after {resolved_max_attempts} attempt(s); manual recovery is required"
         );
         mark_blocked(&mut requests, index, &mut request, "rebase", &reason)?;
         return Err(reason.into());
@@ -1339,7 +1542,7 @@ fn start_pr_refresh(request_id: &str, max_attempts: u32) -> Result<()> {
             &detail,
         )?;
         upsert_session_for_request(&request, "rebase", AgentPhase::Rebase.running_status())?;
-        let pid = spawn_issue_agent(&request, max_attempts, AgentPhase::Rebase)?;
+        let pid = spawn_issue_agent(&request, resolved_max_attempts, AgentPhase::Rebase)?;
         append_event(
             "rebase_agent_dispatched",
             &request.request_id,
@@ -1395,14 +1598,14 @@ fn ensure_refreshable_request(request: &Request) -> Result<()> {
     ensure_gate_approved(request, "plan")?;
     if request.worktree_path.trim().is_empty() {
         return Err(format!(
-            "{} has no worktree. Run codex-auto-dev start first.",
+            "{} has no worktree. Run sandrone start first.",
             request.request_id
         )
         .into());
     }
     if request.branch.trim().is_empty() {
         return Err(format!(
-            "{} has no branch. Run codex-auto-dev start first.",
+            "{} has no branch. Run sandrone start first.",
             request.request_id
         )
         .into());
@@ -1456,19 +1659,19 @@ fn run_pr_status_tool(request: &Request, config: &Config) -> Result<PrStatusRepo
     let output = Command::new("sh")
         .arg(PR_STATUS_TOOL)
         .current_dir(".")
-        .env("CODEX_AUTO_DEV_REQUEST_ID", &request.request_id)
-        .env("CODEX_AUTO_DEV_REQUEST_EXTERNAL_ID", &request.external_id)
-        .env("CODEX_AUTO_DEV_REQUEST_SOURCE", &request.source)
-        .env("CODEX_AUTO_DEV_REQUEST_TITLE", &request.title)
-        .env("CODEX_AUTO_DEV_REQUEST_URL", &request.url)
-        .env("CODEX_AUTO_DEV_CHANGE_PATH", &request.change_path)
-        .env("CODEX_AUTO_DEV_WORKTREE", &request.worktree_path)
-        .env("CODEX_AUTO_DEV_PR_BASE", &config.base_branch)
-        .env("CODEX_AUTO_DEV_PR_HEAD", &request.branch)
-        .env("CODEX_AUTO_DEV_PR_COMPARE_URL", compare_url)
+        .env("SANDRONE_REQUEST_ID", &request.request_id)
+        .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("SANDRONE_REQUEST_SOURCE", &request.source)
+        .env("SANDRONE_REQUEST_TITLE", &request.title)
+        .env("SANDRONE_REQUEST_URL", &request.url)
+        .env("SANDRONE_CHANGE_PATH", &request.change_path)
+        .env("SANDRONE_WORKTREE", &request.worktree_path)
+        .env("SANDRONE_PR_BASE", &config.base_branch)
+        .env("SANDRONE_PR_HEAD", &request.branch)
+        .env("SANDRONE_PR_COMPARE_URL", compare_url)
         .envs(proxy_env())
         .output();
-    let status_path = Path::new(".codex-auto-dev")
+    let status_path = Path::new(".sandrone")
         .join("state")
         .join(format!("{}-pr-status.tsv", request.request_id));
     let status = match output {
@@ -1513,7 +1716,7 @@ fn parse_pr_status_report(line: &str) -> PrStatusReport {
 
 fn append_integration_record(request: &Request, record: &IntegrationRecord<'_>) -> Result<()> {
     let timestamp = now_string();
-    let path = Path::new(&request.change_path).join("change-doc.md");
+    let path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
     let mut content = fs::read_to_string(&path)?;
     if !content.ends_with('\n') {
         content.push('\n');
@@ -1554,7 +1757,7 @@ fn append_pr_conflict_record(request: &Request, record: &IntegrationRecord<'_>) 
     );
     fs::write(&attempt_path, record_content)?;
 
-    let change_doc_path = Path::new(&request.change_path).join("change-doc.md");
+    let change_doc_path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
     let mut change_doc = fs::read_to_string(&change_doc_path)?;
     if !change_doc.ends_with('\n') {
         change_doc.push('\n');
@@ -1674,7 +1877,10 @@ fn block_request(args: &[String]) -> Result<()> {
     println!("Request {request_id} blocked.");
     println!("  stage: {stage}");
     println!("  reason: {reason}");
-    println!("  recovery: {}/recovery.md", request.change_path);
+    println!(
+        "  recovery: {}",
+        request_artifact_path_string(&request, "recovery.md")
+    );
     Ok(())
 }
 
@@ -1691,14 +1897,21 @@ fn resume_request(args: &[String]) -> Result<()> {
         let blocked_stage = fs::read_to_string(Path::new(&request.change_path).join("status.json"))
             .ok()
             .and_then(|content| json_value(&content, "stage"));
-        let phase = if blocked_stage.as_deref() == Some("rebase") {
+        let phase = if blocked_stage.as_deref() == Some("decomposition") {
+            AgentPhase::Decomposition
+        } else if blocked_stage.as_deref() == Some("rebase") {
             AgentPhase::Rebase
+        } else if existing_or_preferred_request_artifact_path(&request, "decomposition.md").exists()
+            && ensure_gate_approved(&request, "decomposition").is_err()
+        {
+            AgentPhase::Decomposition
         } else if ensure_gate_approved(&request, "plan").is_ok() {
             AgentPhase::Implementation
         } else {
             AgentPhase::Planning
         };
         let status = match phase {
+            AgentPhase::Decomposition => "decomposition-review-rejected",
             AgentPhase::Planning => "planning",
             AgentPhase::Implementation => "in-progress",
             AgentPhase::Rebase => "integration-review-rejected",
@@ -1721,12 +1934,27 @@ fn resume_request(args: &[String]) -> Result<()> {
         None
     };
     println!("Resume package for {}", request.request_id);
-    println!("  request: {}/request.md", request.change_path);
-    println!("  plan: {}/plan.md", request.change_path);
-    println!("  change doc: {}/change-doc.md", request.change_path);
-    println!("  agent journal: {}/agent-journal.md", request.change_path);
+    println!(
+        "  request: {}",
+        request_artifact_path_string(&request, "request.md")
+    );
+    println!(
+        "  plan: {}",
+        request_artifact_path_string(&request, "plan.md")
+    );
+    println!(
+        "  change doc: {}",
+        request_artifact_path_string(&request, "change-doc.md")
+    );
+    println!(
+        "  agent journal: {}",
+        request_artifact_path_string(&request, "agent-journal.md")
+    );
     println!("  status: {}/status.json", request.change_path);
-    println!("  recovery: {}/recovery.md", request.change_path);
+    println!(
+        "  recovery: {}",
+        request_artifact_path_string(&request, "recovery.md")
+    );
     println!(
         "  reviews: {}/reviews/plan-review/summary.json and {}/reviews/code-review/summary.json",
         request.change_path, request.change_path
@@ -1745,10 +1973,7 @@ fn resume_request(args: &[String]) -> Result<()> {
     } else {
         println!("  resumed status: {}", request.status);
     }
-    println!(
-        "  next: codex-auto-dev tick --request_id {}",
-        request.request_id
-    );
+    println!("  next: sandrone tick --request_id {}", request.request_id);
     Ok(())
 }
 
@@ -1818,13 +2043,11 @@ fn assess_repository_before_planning() -> Result<PlanPreflight> {
     notes.push(codegraph_preflight_note(&codegraph_outcome));
 
     if codegraph_refresh_required()? {
-        notes.push(
-            "CodeGraph project preview required before planning: 目标仓库有内容，且 docs/codegraph/context.md 缺失或早于最新提交。请运行 codegraph-project-preview skill 生成或刷新文档。"
-                .to_string(),
-        );
+        let context_outcome = refresh_codegraph_context(DEV_REPO);
+        notes.push(codegraph_context_preflight_note(&context_outcome));
     } else {
         notes.push(
-            "CodeGraph 检查通过: docs/codegraph/context.md 看起来不早于最新提交。".to_string(),
+            "CodeGraph 检查通过: obsidian/codegraph/context.md 看起来不早于最新提交。".to_string(),
         );
     }
 
@@ -1863,7 +2086,7 @@ fn upgrade_workspace(args: &[String]) -> Result<()> {
     let dry_run = flag_present(args, "--dry-run");
     let install_defaults = flag_present(args, "--default");
     let config = load_config()?;
-    let requests = load_requests()?;
+    let mut requests = load_requests()?;
 
     if dry_run {
         println!("Upgrade dry run:");
@@ -1920,6 +2143,7 @@ fn upgrade_workspace(args: &[String]) -> Result<()> {
         }
     } else {
         refresh_default_reference_examples()?;
+        write_default_env_files()?;
         println!("Refreshed framework reference examples");
         if install_defaults {
             replace_default_runtime_assets_from_examples()?;
@@ -1929,21 +2153,24 @@ fn upgrade_workspace(args: &[String]) -> Result<()> {
         }
     }
 
+    migrate_legacy_change_paths(&mut requests, dry_run)?;
+    if !dry_run {
+        save_requests(&requests)?;
+    }
+
     for request in &requests {
         if request.change_path.is_empty() {
             continue;
         }
-        let approvals_dir = Path::new(&request.change_path).join("approvals");
-        if !approvals_dir.exists() {
-            if dry_run {
-                println!("Would create {}", approvals_dir.display());
-            } else {
-                fs::create_dir_all(&approvals_dir)?;
-                println!("Created {}", approvals_dir.display());
-            }
+        if dry_run {
+            remove_legacy_approvals_dir(request, true)?;
+        } else {
+            migrate_legacy_approval_records(request)?;
+            remove_legacy_approvals_dir(request, false)?;
         }
 
         upgrade_change_artifacts(request, dry_run)?;
+        normalize_legacy_gate_records(request, dry_run)?;
 
         if !dry_run {
             upsert_session_for_request(request, "planning", "handoff-ready")?;
@@ -1967,7 +2194,7 @@ fn list_requests() -> Result<()> {
     registry::refresh_current_workspace_registry_or_warn("ready");
     let requests = load_requests()?;
     if requests.is_empty() {
-        println!("No requests yet. Run: codex-auto-dev update");
+        println!("No requests yet. Run: sandrone update");
         return Ok(());
     }
     for request in requests {
@@ -2024,14 +2251,12 @@ fn validate() -> Result<()> {
         .iter()
         .filter(|request| !request.change_path.is_empty())
     {
-        for file in [
-            "request.md",
-            "plan.md",
-            "change-doc.md",
-            "agent-journal.md",
-            "status.json",
-        ] {
-            let path = Path::new(&request.change_path).join(file);
+        for file in request_required_runtime_artifacts(request) {
+            let path = if file == "status.json" {
+                Path::new(&request.change_path).join(file)
+            } else {
+                existing_or_preferred_request_artifact_path(request, file)
+            };
             if !path.exists() {
                 return Err(format!(
                     "{} missing required artifact: {}",
@@ -2056,20 +2281,34 @@ fn select_tick_requests(requests: &[Request], request_id: Option<&str>) -> Resul
         if is_agent_running_status(&requests[index].status) {
             return Ok(Vec::new());
         }
+        if is_slice_request(&requests[index])
+            && !slice_dependencies_ready(&requests[index], requests)?
+        {
+            return Ok(Vec::new());
+        }
         return Ok(vec![requests[index].request_id.clone()]);
     }
-    Ok(requests
-        .iter()
-        .filter(|request| !is_agent_running_status(&request.status))
-        .filter(|request| !is_terminal_status(&request.status))
-        .map(|request| request.request_id.clone())
-        .collect())
+    let mut selected = Vec::new();
+    for request in requests {
+        if is_agent_running_status(&request.status) || is_terminal_status(&request.status) {
+            continue;
+        }
+        if is_slice_request(request) && !slice_dependencies_ready(request, requests)? {
+            continue;
+        }
+        selected.push(request.request_id.clone());
+    }
+    Ok(selected)
 }
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(
         canonical_status(status),
-        STATUS_FINISHED | STATUS_WAIT_FINISH | STATUS_WAIT_UPDATE_PR | "blocked"
+        STATUS_FINISHED
+            | STATUS_WAIT_FINISH
+            | STATUS_WAIT_UPDATE_PR
+            | STATUS_SLICE_FINISHED
+            | "blocked"
     )
 }
 
@@ -2077,6 +2316,7 @@ fn is_agent_running_status(status: &str) -> bool {
     matches!(
         status,
         "agent-running"
+            | "decomposition-agent-running"
             | "planning-agent-running"
             | "implementation-agent-running"
             | "rebase-agent-running"
@@ -2176,16 +2416,24 @@ fn should_sync_runtime_status(central_status: &str, runtime_status: &str) -> boo
 fn status_progress_rank(status: &str) -> Option<u8> {
     match canonical_status(status) {
         "discovered" => Some(1),
-        "planning" => Some(10),
-        "planning-agent-running" | "agent-running" => Some(20),
-        "plan-submitted" => Some(30),
-        "plan-review-rejected" => Some(35),
-        "plan-approved" => Some(40),
-        "in-progress" => Some(50),
+        "decomposition" => Some(5),
+        "decomposition-agent-running" => Some(8),
+        "decomposition-submitted" => Some(10),
+        "decomposition-review-rejected" => Some(12),
+        "decomposition-approved" => Some(15),
+        STATUS_SLICES_READY => Some(16),
+        STATUS_SLICES_RUNNING => Some(17),
+        "planning" => Some(20),
+        "planning-agent-running" | "agent-running" => Some(30),
+        "plan-submitted" => Some(40),
+        "plan-review-rejected" => Some(45),
+        "plan-approved" => Some(50),
+        "in-progress" => Some(55),
         "implementation-agent-running" => Some(60),
         "change-doc-submitted" => Some(70),
         "code-review-rejected" => Some(75),
         "change-doc-approved" => Some(80),
+        STATUS_SLICE_FINISHED => Some(81),
         "integration-review-submitted" => Some(82),
         "integration-review-rejected" => Some(84),
         "rebase-agent-running" => Some(86),
@@ -2231,7 +2479,7 @@ impl Drop for RequestLock {
 }
 
 fn request_lock_path(request_id: &str) -> PathBuf {
-    Path::new(".codex-auto-dev/state/locks").join(format!("{request_id}.lock"))
+    Path::new(".sandrone/state/locks").join(format!("{request_id}.lock"))
 }
 
 fn request_lock_is_stale(path: &Path) -> Result<bool> {
@@ -2297,14 +2545,39 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
     }
 
     if ensure_gate_approved(&request, "change-doc").is_ok() {
+        if is_slice_request(&request) {
+            mark_slice_finished_by_id(
+                &request.request_id,
+                "slice change-doc gate is valid; marking slice finished",
+            )?;
+            return Ok(true);
+        }
         mark_wait_update_pr_by_id(
             &request.request_id,
-            "change-doc approval is valid; waiting for PR creation or update",
+            "change-doc gate is valid; waiting for PR creation or update",
         )?;
         return Ok(true);
     }
 
+    if is_parent_request(&request) && ensure_gate_approved(&request, "decomposition").is_ok() {
+        let mut requests = load_requests()?;
+        let index = find_request_index(&requests, &request.request_id)
+            .ok_or_else(|| format!("unknown request_id: {}", request.request_id))?;
+        let changed = materialize_slices_for_parent(
+            &mut requests,
+            index,
+            &assess_repository_before_planning()?,
+        )?;
+        save_requests(&requests)?;
+        if changed {
+            return Ok(true);
+        }
+        return refresh_parent_slice_status(&request.request_id);
+    }
+
     match request.status.as_str() {
+        "decomposition-submitted" => run_decomposition_review_from_tick(&request.request_id),
+        "decomposition-agent-running" => refresh_agent_phase(&request, AgentPhase::Decomposition),
         "plan-submitted" => run_plan_review_from_tick(&request.request_id),
         "change-doc-submitted" => run_code_review_from_tick(&request.request_id),
         "planning-agent-running" => refresh_agent_phase(&request, AgentPhase::Planning),
@@ -2318,7 +2591,7 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
 
 fn dispatch_next_agent_for_request(
     request_id: &str,
-    max_attempts: u32,
+    max_attempts: Option<u32>,
     preflight: &mut Option<PlanPreflight>,
 ) -> Result<Option<(Request, AgentPhase, u32)>> {
     let mut requests = load_requests()?;
@@ -2335,19 +2608,34 @@ fn dispatch_next_agent_for_request(
     {
         return Ok(None);
     }
+    if is_slice_request(&requests[index]) && !slice_dependencies_ready(&requests[index], &requests)?
+    {
+        return Ok(None);
+    }
     if requests[index].change_path.is_empty() {
         let change_name = auto_change_name(&requests[index]);
         if preflight.is_none() {
             *preflight = Some(assess_repository_before_planning()?);
         }
-        let request = create_plan_packet_for_index(
-            &mut requests,
-            index,
-            &change_name,
-            preflight
-                .as_ref()
-                .ok_or("planning preflight was not initialized")?,
-        )?;
+        let request = if is_parent_request(&requests[index]) {
+            create_decomposition_packet_for_index(
+                &mut requests,
+                index,
+                Some(&change_name),
+                preflight
+                    .as_ref()
+                    .ok_or("planning preflight was not initialized")?,
+            )?
+        } else {
+            create_plan_packet_for_index(
+                &mut requests,
+                index,
+                &change_name,
+                preflight
+                    .as_ref()
+                    .ok_or("planning preflight was not initialized")?,
+            )?
+        };
         println!("Created change packet for {}", request.request_id);
         println!("  change path: {}", request.change_path);
     }
@@ -2356,16 +2644,20 @@ fn dispatch_next_agent_for_request(
     index = find_request_index(&requests, request_id)
         .ok_or_else(|| format!("selected request disappeared: {request_id}"))?;
     let mut request = requests[index].clone();
+    if is_slice_request(&request) && !slice_dependencies_ready(&request, &requests)? {
+        return Ok(None);
+    }
     let Some(phase) = next_agent_phase(&request)? else {
         return Ok(None);
     };
     if !Path::new(phase.tool_path()).exists() {
         return Err(format!("{} does not exist", phase.tool_path()).into());
     }
-    if review_attempts_exhausted(&request, phase, max_attempts)? {
+    let resolved_max_attempts = resolve_max_attempts(phase, max_attempts);
+    if review_attempts_exhausted(&request, phase, resolved_max_attempts)? {
         let stage = phase.as_str();
         let reason = format!(
-            "{stage} review failed after {max_attempts} attempt(s); manual recovery is required"
+            "{stage} review failed after {resolved_max_attempts} attempt(s); manual recovery is required"
         );
         mark_blocked(&mut requests, index, &mut request, stage, &reason)?;
         return Ok(None);
@@ -2388,7 +2680,7 @@ fn dispatch_next_agent_for_request(
     write_status_json(&request, phase_name, phase.running_status(), "")?;
     upsert_session_for_request(&request, phase_name, phase.running_status())?;
 
-    match spawn_issue_agent(&request, max_attempts, phase) {
+    match spawn_issue_agent(&request, resolved_max_attempts, phase) {
         Ok(pid) => {
             append_event(
                 "agent_dispatched",
@@ -2416,15 +2708,57 @@ fn dispatch_next_agent_for_request(
     }
 }
 
+fn dispatch_next_slice_for_parent(
+    parent_id: &str,
+    max_attempts: Option<u32>,
+    preflight: &mut Option<PlanPreflight>,
+) -> Result<Option<(Request, AgentPhase, u32)>> {
+    let requests = load_requests()?;
+    let Some(parent) = requests
+        .iter()
+        .find(|request| request.request_id == parent_id)
+    else {
+        return Ok(None);
+    };
+    if is_slice_request(parent) {
+        return Ok(None);
+    }
+    for request in &requests {
+        if !is_slice_request(request) || slice_parent_id(request).as_deref() != Some(parent_id) {
+            continue;
+        }
+        if is_agent_running_status(&request.status)
+            || is_terminal_status(&request.status)
+            || !slice_dependencies_ready(request, &requests)?
+        {
+            continue;
+        }
+        let Some(_lock) = RequestLock::acquire(&request.request_id)? else {
+            continue;
+        };
+        return dispatch_next_agent_for_request(&request.request_id, max_attempts, preflight);
+    }
+    Ok(None)
+}
+
 fn next_agent_phase(request: &Request) -> Result<Option<AgentPhase>> {
     if request.change_path.is_empty()
         || is_terminal_status(&request.status)
         || is_agent_running_status(&request.status)
         || matches!(
             request.status.as_str(),
-            "plan-submitted" | "change-doc-submitted"
+            "decomposition-submitted" | "plan-submitted" | "change-doc-submitted"
         )
     {
+        return Ok(None);
+    }
+    if is_parent_request(request) {
+        if request.status == "decomposition-review-rejected" {
+            return Ok(Some(AgentPhase::Decomposition));
+        }
+        if ensure_gate_approved(request, "decomposition").is_err() {
+            return Ok(Some(AgentPhase::Decomposition));
+        }
         return Ok(None);
     }
     if request.status == "plan-review-rejected" {
@@ -2448,6 +2782,7 @@ fn review_attempts_exhausted(
     max_attempts: u32,
 ) -> Result<bool> {
     let stage = match phase {
+        AgentPhase::Decomposition => "decomposition-review",
         AgentPhase::Planning => "plan-review",
         AgentPhase::Implementation => "code-review",
         AgentPhase::Rebase => "integration-review",
@@ -2456,7 +2791,10 @@ fn review_attempts_exhausted(
     Ok(attempts >= max_attempts
         && matches!(
             request.status.as_str(),
-            "plan-review-rejected" | "code-review-rejected" | "integration-review-rejected"
+            "decomposition-review-rejected"
+                | "plan-review-rejected"
+                | "code-review-rejected"
+                | "integration-review-rejected"
         ))
 }
 
@@ -2503,6 +2841,10 @@ fn refresh_agent_phase(request: &Request, phase: AgentPhase) -> Result<bool> {
     }
 
     match phase {
+        AgentPhase::Decomposition => {
+            submit_gate_from_tick(&request.request_id, "decomposition")?;
+            run_decomposition_review_from_tick(&request.request_id)
+        }
         AgentPhase::Planning => {
             submit_gate_from_tick(&request.request_id, "plan")?;
             run_plan_review_from_tick(&request.request_id)
@@ -2545,8 +2887,7 @@ fn refresh_legacy_agent_status(request: &Request) -> Result<bool> {
         return refresh_missing_agent_exit(request, "agent");
     };
     let reason = if exit_code == "0" {
-        "legacy issue-agent exited successfully but change-doc approval is missing or stale"
-            .to_string()
+        "legacy issue-agent exited successfully but change-doc gate is missing or stale".to_string()
     } else {
         format!(
             "legacy issue-agent exited with code {exit_code}. See {} and {}",
@@ -2588,6 +2929,8 @@ fn submit_gate_from_tick(request_id: &str, gate: &str) -> Result<()> {
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
     ensure_change_packet(&request)?;
+    request.status = format!("{}-submitted", gate_status_prefix(gate));
+    request.updated_at = now_string();
     write_approval_record(
         &request,
         gate,
@@ -2596,16 +2939,14 @@ fn submit_gate_from_tick(request_id: &str, gate: &str) -> Result<()> {
         "outer-tick",
         "submitted by outer tick after agent phase completed",
     )?;
-    request.status = format!("{}-submitted", gate_status_prefix(gate));
-    request.updated_at = now_string();
     requests[index] = request.clone();
     save_requests(&requests)?;
     write_status_json(
         &request,
-        if gate == "plan" {
-            "planning"
-        } else {
-            "implementation"
+        match gate {
+            "decomposition" => "decomposition",
+            "plan" => "planning",
+            _ => "implementation",
         },
         &request.status,
         "submitted by outer tick",
@@ -2613,15 +2954,24 @@ fn submit_gate_from_tick(request_id: &str, gate: &str) -> Result<()> {
     append_event(
         "gate_submitted",
         &request.request_id,
-        if gate == "plan" {
-            "planning"
-        } else {
-            "implementation"
+        match gate {
+            "decomposition" => "decomposition",
+            "plan" => "planning",
+            _ => "implementation",
         },
         &request.status,
         &format!("gate={gate}; source=outer-tick"),
     )?;
     update_gate_session(&request, gate, "waiting-review")
+}
+
+fn run_decomposition_review_from_tick(request_id: &str) -> Result<bool> {
+    let args = vec!["--request_id".to_string(), request_id.to_string()];
+    match decomposition_review(&args) {
+        Ok(()) => Ok(true),
+        Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 fn run_plan_review_from_tick(request_id: &str) -> Result<bool> {
@@ -2640,10 +2990,19 @@ fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match code_review(&args) {
         Ok(()) => {
-            mark_wait_update_pr_by_id(
-                request_id,
-                "code-review approved; waiting for PR creation or update",
-            )?;
+            let requests = load_requests()?;
+            let request = requests
+                .iter()
+                .find(|request| request.request_id == request_id)
+                .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+            if is_slice_request(request) {
+                mark_slice_finished_by_id(request_id, "code-review approved; slice finished")?;
+            } else {
+                mark_wait_update_pr_by_id(
+                    request_id,
+                    "code-review approved; waiting for PR creation or update",
+                )?;
+            }
             Ok(true)
         }
         Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
@@ -2667,9 +3026,11 @@ fn run_integration_review_from_tick(request_id: &str) -> Result<bool> {
 }
 
 fn is_review_terminal_error(message: &str) -> bool {
-    message.contains("rejected plan review")
+    message.contains("rejected decomposition review")
+        || message.contains("rejected plan review")
         || message.contains("rejected code review")
         || message.contains("rejected integration review")
+        || message.contains("format check failed before code-review")
         || message.contains("review gate unavailable")
         || message.contains("gate unavailable")
 }
@@ -2707,9 +3068,9 @@ fn mark_wait_update_pr_by_id(request_id: &str, reason: &str) -> Result<()> {
     upsert_session_for_request(&request, "implementation", STATUS_WAIT_UPDATE_PR)
 }
 
-fn parse_max_attempts(value: Option<String>) -> Result<u32> {
+fn parse_max_attempts(value: Option<String>) -> Result<Option<u32>> {
     let Some(value) = value else {
-        return Ok(20);
+        return Ok(None);
     };
     let parsed = value
         .parse::<u32>()
@@ -2717,7 +3078,7 @@ fn parse_max_attempts(value: Option<String>) -> Result<u32> {
     if parsed == 0 {
         return Err("--max-attempts must be greater than 0".into());
     }
-    Ok(parsed)
+    Ok(Some(parsed))
 }
 
 fn parse_parallel_limit(value: Option<String>, default_limit: usize) -> Result<usize> {
@@ -2731,6 +3092,19 @@ fn parse_parallel_limit(value: Option<String>, default_limit: usize) -> Result<u
         return Err("--parallel-limit must be greater than 0".into());
     }
     Ok(parsed)
+}
+
+fn phase_default_max_attempts(phase: AgentPhase) -> u32 {
+    match phase {
+        AgentPhase::Decomposition => DEFAULT_DECOMPOSITION_MAX_ATTEMPTS,
+        AgentPhase::Planning => DEFAULT_PLAN_MAX_ATTEMPTS,
+        AgentPhase::Implementation => DEFAULT_CODE_MAX_ATTEMPTS,
+        AgentPhase::Rebase => DEFAULT_INTEGRATION_MAX_ATTEMPTS,
+    }
+}
+
+fn resolve_max_attempts(phase: AgentPhase, max_attempts: Option<u32>) -> u32 {
+    max_attempts.unwrap_or_else(|| phase_default_max_attempts(phase))
 }
 
 fn auto_change_name(request: &Request) -> String {
@@ -2788,95 +3162,15 @@ fn manual_request(request_id: &str, change_name: &str) -> Request {
 }
 
 fn ensure_initialized() -> Result<()> {
+    registry::migrate_legacy_current_workspace_state_if_needed()?;
     if !Path::new(CONFIG_PATH).exists() {
-        return Err("not initialized. Run: codex-auto-dev new --url <git-url> or codex-auto-dev new --name <project-name>".into());
+        return Err("not initialized. Run: sandrone new --url <git-url> or sandrone new --name <project-name>".into());
     }
     Ok(())
 }
 
 fn repo_has_commits(cwd: &str) -> bool {
     git_output(cwd, &["rev-parse", "--verify", "HEAD"]).is_ok()
-}
-
-fn codegraph_bin() -> String {
-    env::var("CODEX_AUTO_DEV_CODEGRAPH_BIN").unwrap_or_else(|_| "codegraph".to_string())
-}
-
-fn codegraph_index_ready(cwd: &str) -> bool {
-    Path::new(cwd).join(".codegraph").is_dir()
-}
-
-fn ensure_codegraph_initialized(cwd: &str) -> CodegraphInitOutcome {
-    if !repo_has_commits(cwd) {
-        return CodegraphInitOutcome::SkippedEmptyRepo;
-    }
-    if codegraph_index_ready(cwd) {
-        return CodegraphInitOutcome::AlreadyInitialized;
-    }
-
-    let bin = codegraph_bin();
-    match Command::new(&bin).args(["init", "-i", cwd]).output() {
-        Ok(output) if output.status.success() => {
-            if codegraph_index_ready(cwd) {
-                CodegraphInitOutcome::Initialized
-            } else {
-                CodegraphInitOutcome::Failed(format!(
-                    "{bin} init -i {cwd} succeeded but {cwd}/.codegraph was not created"
-                ))
-            }
-        }
-        Ok(output) => {
-            let stderr = review_diagnostic_excerpt(&String::from_utf8_lossy(&output.stderr));
-            CodegraphInitOutcome::Failed(format!("{bin} init -i {cwd} failed: {stderr}"))
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            CodegraphInitOutcome::CommandUnavailable(format!("{bin} unavailable: {error}"))
-        }
-        Err(error) => CodegraphInitOutcome::Failed(format!("{bin} could not run: {error}")),
-    }
-}
-
-fn codegraph_preflight_note(outcome: &CodegraphInitOutcome) -> String {
-    match outcome {
-        CodegraphInitOutcome::SkippedEmptyRepo => "CodeGraph 跳过: 目标仓库为空。".to_string(),
-        CodegraphInitOutcome::AlreadyInitialized => {
-            "CodeGraph initialized: dev/repo/.codegraph 已存在。".to_string()
-        }
-        CodegraphInitOutcome::Initialized => {
-            "CodeGraph initialized: 已运行 codegraph init -i dev/repo。".to_string()
-        }
-        CodegraphInitOutcome::CommandUnavailable(detail) => {
-            format!("CodeGraph 初始化跳过: {detail}")
-        }
-        CodegraphInitOutcome::Failed(detail) => {
-            format!("CodeGraph 初始化失败: {detail}")
-        }
-    }
-}
-
-fn print_codegraph_init_outcome(prefix: &str, outcome: &CodegraphInitOutcome) {
-    println!("{prefix}{}", codegraph_preflight_note(outcome));
-}
-
-fn codegraph_event_status(outcome: &CodegraphInitOutcome) -> &'static str {
-    match outcome {
-        CodegraphInitOutcome::Initialized | CodegraphInitOutcome::AlreadyInitialized => "ready",
-        CodegraphInitOutcome::SkippedEmptyRepo => "skipped",
-        CodegraphInitOutcome::CommandUnavailable(_) | CodegraphInitOutcome::Failed(_) => "warning",
-    }
-}
-
-fn codegraph_outcome_detail(outcome: &CodegraphInitOutcome) -> String {
-    match outcome {
-        CodegraphInitOutcome::SkippedEmptyRepo => "target repo is empty".to_string(),
-        CodegraphInitOutcome::AlreadyInitialized => {
-            "dev/repo/.codegraph already exists".to_string()
-        }
-        CodegraphInitOutcome::Initialized => "ran codegraph init -i dev/repo".to_string(),
-        CodegraphInitOutcome::CommandUnavailable(detail) | CodegraphInitOutcome::Failed(detail) => {
-            detail.clone()
-        }
-    }
 }
 
 fn pull_target_repo_before_worktree_creation() -> Result<GitPullOutcome> {
@@ -2946,25 +3240,6 @@ fn upstream_is_ahead(cwd: &str) -> Result<bool> {
     Ok(count.trim().parse::<u32>().unwrap_or(0) > 0)
 }
 
-fn codegraph_refresh_required() -> Result<bool> {
-    if !repo_has_commits(DEV_REPO) {
-        return Ok(false);
-    }
-    let codegraph_path = Path::new("docs/codegraph/context.md");
-    if !codegraph_path.exists() {
-        return Ok(true);
-    }
-    let head_timestamp = git_output(DEV_REPO, &["log", "-1", "--format=%ct"])?
-        .parse::<u64>()
-        .unwrap_or(0);
-    let codegraph_timestamp = fs::metadata(codegraph_path)?
-        .modified()?
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    Ok(codegraph_timestamp < head_timestamp)
-}
-
 fn fetch_if_remote_exists() -> Result<()> {
     let remotes = git_output(DEV_REPO, &["remote"]).unwrap_or_default();
     if remotes.trim().is_empty() {
@@ -2994,8 +3269,8 @@ fn spawn_issue_agent(request: &Request, max_attempts: u32, phase: AgentPhase) ->
     let mut command = Command::new("sh");
     command
         .arg("-c")
-        .arg("tool=$1; exit_path=$2; hook_log=$3; run_hook() { code=$1; if [ -n \"${CODEX_AUTO_DEV_BIN:-}\" ] && [ -n \"${CODEX_AUTO_DEV_REQUEST_ID:-}\" ]; then \"$CODEX_AUTO_DEV_BIN\" advance --request_id \"$CODEX_AUTO_DEV_REQUEST_ID\" --max-attempts \"${CODEX_AUTO_DEV_MAX_ATTEMPTS:-20}\" >> \"$hook_log\" 2>&1 || true; fi; }; write_exit() { code=$1; printf '%s\n' \"$code\" > \"$exit_path\"; run_hook \"$code\"; exit \"$code\"; }; trap 'write_exit 129' HUP; trap 'write_exit 130' INT; trap 'write_exit 143' TERM; sh \"$tool\"; write_exit \"$?\"")
-        .arg("codex-auto-dev-agent-wrapper")
+        .arg("tool=$1; exit_path=$2; hook_log=$3; run_hook() { code=$1; if [ -n \"${SANDRONE_BIN:-}\" ] && [ -n \"${SANDRONE_REQUEST_ID:-}\" ]; then \"$SANDRONE_BIN\" advance --request_id \"$SANDRONE_REQUEST_ID\" --max-attempts \"$SANDRONE_MAX_ATTEMPTS\" >> \"$hook_log\" 2>&1 || true; fi; }; write_exit() { code=$1; printf '%s\n' \"$code\" > \"$exit_path\"; run_hook \"$code\"; exit \"$code\"; }; trap 'write_exit 129' HUP; trap 'write_exit 130' INT; trap 'write_exit 143' TERM; sh \"$tool\"; write_exit \"$?\"")
+        .arg("Sandrone-agent-wrapper")
         .arg(tool_path)
         .arg(&exit_path)
         .arg(&hook_log_path)
@@ -3020,64 +3295,89 @@ fn apply_issue_agent_env(
     phase: AgentPhase,
 ) -> Result<()> {
     let current_exe = env::current_exe()?;
+    let request_artifact = request_handoff_artifact_path_string(request, "request.md");
+    let plan_artifact = request_handoff_artifact_path_string(request, "plan.md");
+    let decomposition_artifact = request_handoff_artifact_path_string(request, "decomposition.md");
+    let dag_artifact = request_handoff_artifact_path_string(request, "dag.json");
+    let change_doc_artifact = request_handoff_artifact_path_string(request, "change-doc.md");
+    let agent_journal_artifact = request_handoff_artifact_path_string(request, "agent-journal.md");
     command
+        .env("SANDRONE_BIN", current_exe.to_string_lossy().to_string())
+        .env("SANDRONE_WORKSPACE", absolute_path_string("."))
+        .env("SANDRONE_ENV_FILE", absolute_path_string(".env"))
+        .env("SANDRONE_TARGET_REPO", absolute_path_string(DEV_REPO))
+        .env("SANDRONE_REQUEST_ID", &request.request_id)
+        .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("SANDRONE_REQUEST_SOURCE", &request.source)
+        .env("SANDRONE_REQUEST_TITLE", &request.title)
+        .env("SANDRONE_REQUEST_BODY", &request.body)
+        .env("SANDRONE_REQUEST_URL", &request.url)
+        .env("SANDRONE_BRANCH", &request.branch)
         .env(
-            "CODEX_AUTO_DEV_BIN",
-            current_exe.to_string_lossy().to_string(),
-        )
-        .env("CODEX_AUTO_DEV_WORKSPACE", absolute_path_string("."))
-        .env("CODEX_AUTO_DEV_TARGET_REPO", absolute_path_string(DEV_REPO))
-        .env("CODEX_AUTO_DEV_REQUEST_ID", &request.request_id)
-        .env("CODEX_AUTO_DEV_REQUEST_EXTERNAL_ID", &request.external_id)
-        .env("CODEX_AUTO_DEV_REQUEST_SOURCE", &request.source)
-        .env("CODEX_AUTO_DEV_REQUEST_TITLE", &request.title)
-        .env("CODEX_AUTO_DEV_REQUEST_BODY", &request.body)
-        .env("CODEX_AUTO_DEV_REQUEST_URL", &request.url)
-        .env("CODEX_AUTO_DEV_BRANCH", &request.branch)
-        .env(
-            "CODEX_AUTO_DEV_WORKTREE",
+            "SANDRONE_WORKTREE",
             absolute_path_string(request.worktree_path.as_str()),
         )
-        .env("CODEX_AUTO_DEV_MAX_ATTEMPTS", max_attempts.to_string())
-        .env("CODEX_AUTO_DEV_AGENT_PHASE", phase.as_str())
+        .env("SANDRONE_MAX_ATTEMPTS", max_attempts.to_string())
+        .env("SANDRONE_AGENT_PHASE", phase.as_str())
         .env(
-            "CODEX_AUTO_DEV_CHANGE_PATH",
+            "SANDRONE_CHANGE_PATH",
             absolute_path_string(request.change_path.as_str()),
         )
         .env(
-            "CODEX_AUTO_DEV_REQUEST",
-            absolute_path_string(Path::new(&request.change_path).join("request.md")),
+            "SANDRONE_REQUEST",
+            absolute_path_string_or_empty(request_artifact),
         )
         .env(
-            "CODEX_AUTO_DEV_PLAN",
-            absolute_path_string(Path::new(&request.change_path).join("plan.md")),
+            "SANDRONE_PLAN",
+            absolute_path_string_or_empty(plan_artifact),
         )
         .env(
-            "CODEX_AUTO_DEV_CHANGE_DOC",
-            absolute_path_string(Path::new(&request.change_path).join("change-doc.md")),
+            "SANDRONE_DECOMPOSITION",
+            absolute_path_string_or_empty(decomposition_artifact),
+        )
+        .env("SANDRONE_DAG", absolute_path_string_or_empty(dag_artifact))
+        .env(
+            "SANDRONE_CHANGE_DOC",
+            absolute_path_string_or_empty(change_doc_artifact),
         )
         .env(
-            "CODEX_AUTO_DEV_AGENT_JOURNAL",
-            absolute_path_string(Path::new(&request.change_path).join("agent-journal.md")),
+            "SANDRONE_AGENT_JOURNAL",
+            absolute_path_string_or_empty(agent_journal_artifact),
         )
         .env(
-            "CODEX_AUTO_DEV_STATUS",
+            "SANDRONE_STATUS",
             absolute_path_string(Path::new(&request.change_path).join("status.json")),
         )
         .env(
-            "CODEX_AUTO_DEV_ISSUE_AGENT_SHARED_PROMPT",
+            "SANDRONE_CODEGRAPH_CONTEXT",
+            absolute_path_string("obsidian/codegraph/context.md"),
+        )
+        .env(
+            "SANDRONE_OBSIDIAN_NOTE",
+            absolute_path_string(obsidian_request_note_path(request)),
+        )
+        .env(
+            "SANDRONE_OBSIDIAN_PROJECT",
+            absolute_path_string(OBSIDIAN_PROJECT_NOTE),
+        )
+        .env(
+            "SANDRONE_ISSUE_AGENT_SHARED_PROMPT",
             absolute_path_string(ISSUE_AGENT_PROMPT),
         )
         .env(
-            "CODEX_AUTO_DEV_ISSUE_AGENT_PROMPT",
+            "SANDRONE_ISSUE_AGENT_PROMPT",
             absolute_path_string(phase.prompt_path()),
         )
         .env(
-            "CODEX_AUTO_DEV_REBASE_AGENT_PROMPT",
+            "SANDRONE_REBASE_AGENT_PROMPT",
             absolute_path_string(REBASE_AGENT_PROMPT),
         )
         .env(
-            "CODEX_AUTO_DEV_AGENT_PROMPT",
+            "SANDRONE_CHECK_FORMAT_TOOL",
+            absolute_path_string(CHECK_FORMAT_TOOL),
+        )
+        .env(
+            "SANDRONE_AGENT_PROMPT",
             absolute_path_string(phase.prompt_path()),
         )
         .envs(proxy_env());
@@ -3115,7 +3415,7 @@ fn process_is_running(pid: u32) -> bool {
 }
 
 fn agent_state_dir() -> PathBuf {
-    Path::new(".codex-auto-dev/state/agents").to_path_buf()
+    Path::new(".sandrone/state/agents").to_path_buf()
 }
 
 fn agent_pid_path(request_id: &str) -> PathBuf {
@@ -3294,15 +3594,15 @@ fn required_gate(args: &[String]) -> Result<String> {
 
 fn validate_gate(gate: &str) -> Result<()> {
     match gate {
-        "plan" | "change-doc" => Ok(()),
-        _ => Err("gate must be `plan` or `change-doc`".into()),
+        "decomposition" | "plan" | "change-doc" => Ok(()),
+        _ => Err("gate must be `decomposition`, `plan`, or `change-doc`".into()),
     }
 }
 
 fn validate_session_phase(phase: &str) -> Result<()> {
     match phase {
-        "planning" | "implementation" | "rebase" => Ok(()),
-        _ => Err("phase must be `planning`, `implementation`, or `rebase`".into()),
+        "decomposition" | "planning" | "implementation" | "rebase" => Ok(()),
+        _ => Err("phase must be `decomposition`, `planning`, `implementation`, or `rebase`".into()),
     }
 }
 
@@ -3334,6 +3634,8 @@ fn validate_change_name(change_name: &str) -> Result<()> {
 }
 
 fn upgrade_change_artifacts(request: &Request, dry_run: bool) -> Result<()> {
+    ensure_prefixed_change_artifact_names(request, dry_run)?;
+    remove_obsolete_change_artifacts(request, dry_run)?;
     let preflight = PlanPreflight {
         notes: vec!["upgrade 迁移生成的模板；正式计划前必须重新运行 plan preflight。".to_string()],
     };
@@ -3341,11 +3643,15 @@ fn upgrade_change_artifacts(request: &Request, dry_run: bool) -> Result<()> {
         ("request.md", render_request(request)),
         ("plan.md", render_plan_template(request, &preflight)),
         ("change-doc.md", render_change_doc_template(request)),
+        ("pr-doc.md", render_pr_doc_template(request)),
         ("agent-journal.md", render_agent_journal_template(request)),
     ];
 
     for (file, content) in artifacts {
-        let path = Path::new(&request.change_path).join(file);
+        if !request_generates_markdown_artifact(request, file) {
+            continue;
+        }
+        let path = request_artifact_path_buf(request, file);
         if should_write_managed_artifact(&path)? {
             if dry_run {
                 println!("Would update {}", path.display());
@@ -3356,20 +3662,114 @@ fn upgrade_change_artifacts(request: &Request, dry_run: bool) -> Result<()> {
         }
     }
     let status_path = Path::new(&request.change_path).join("status.json");
-    if !status_path.exists() {
-        if dry_run {
-            println!("Would create {}", status_path.display());
+    if dry_run {
+        println!("Would refresh {}", status_path.display());
+    } else {
+        let existed = status_path.exists();
+        write_status_json(
+            request,
+            stage_for_status_json(&request.status),
+            &request.status,
+            "upgrade refreshed status paths",
+        )?;
+        if existed {
+            println!("Refreshed {}", status_path.display());
         } else {
-            write_status_json(
-                request,
-                "planning",
-                &request.status,
-                "upgrade generated status",
-            )?;
             println!("Created {}", status_path.display());
         }
     }
     Ok(())
+}
+
+fn migrate_legacy_change_paths(requests: &mut [Request], dry_run: bool) -> Result<()> {
+    for request in requests {
+        let Some(change_name) = legacy_change_name(&request.change_path, &request.change_name)
+        else {
+            continue;
+        };
+        let new_path = change_artifact_path(&change_name);
+        if request.change_path == new_path {
+            continue;
+        }
+        if dry_run {
+            println!(
+                "Would migrate {} change path: {} -> {}",
+                request.request_id, request.change_path, new_path
+            );
+            continue;
+        }
+        let old_path = Path::new(&request.change_path);
+        let target_path = Path::new(&new_path);
+        if old_path.exists() && !target_path.exists() {
+            copy_dir_recursive(old_path, target_path)?;
+            println!("Copied {} to {}", old_path.display(), target_path.display());
+        } else if !target_path.exists() {
+            fs::create_dir_all(target_path)?;
+            println!("Created {}", target_path.display());
+        } else {
+            println!("Using existing {}", target_path.display());
+        }
+        request.change_name = change_name;
+        request.change_path = new_path;
+        request.updated_at = now_string();
+    }
+    Ok(())
+}
+
+fn legacy_change_name(change_path: &str, change_name: &str) -> Option<String> {
+    let trimmed = change_path.trim();
+    if !trimmed.starts_with("docs/changes/") {
+        return None;
+    }
+    if !change_name.trim().is_empty() {
+        return Some(change_name.trim().to_string());
+    }
+    Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() && !destination_path.exists() {
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn stage_for_status_json(status: &str) -> &'static str {
+    match canonical_status(status) {
+        "decomposition"
+        | "decomposition-agent-running"
+        | "decomposition-submitted"
+        | "decomposition-review-rejected"
+        | "decomposition-approved" => "decomposition",
+        "discovered"
+        | "planning"
+        | "planning-agent-running"
+        | "plan-submitted"
+        | "plan-review-rejected"
+        | "plan-approved" => "planning",
+        "in-progress"
+        | "implementation-agent-running"
+        | "change-doc-submitted"
+        | "change-doc-approved"
+        | "code-review-rejected" => "implementation",
+        "rebase-agent-running" | "integration-review-rejected" => "rebase",
+        "integration-review-submitted" => "integration-review",
+        STATUS_WAIT_UPDATE_PR | STATUS_WAIT_FINISH | STATUS_FINISHED => "delivery",
+        "blocked" => "blocked",
+        _ => "planning",
+    }
 }
 
 fn should_write_managed_artifact(path: &Path) -> Result<bool> {
@@ -3377,7 +3777,12 @@ fn should_write_managed_artifact(path: &Path) -> Result<bool> {
         return Ok(true);
     }
     let content = fs::read_to_string(path)?;
-    if path.file_name().and_then(|name| name.to_str()) == Some("agent-journal.md") {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with("agent-journal.md"))
+        .unwrap_or(false)
+    {
         return Ok(content.trim().is_empty()
             || content.contains("# Thread Handoff")
             || content.contains("Codex Plan Prompt")
@@ -3389,6 +3794,8 @@ fn should_write_managed_artifact(path: &Path) -> Result<bool> {
         || content.contains("# Thread Handoff")
         || content.contains("Codex Plan Prompt")
         || content.contains("Codex Start Prompt")
+        || content.contains("这是空白计划模板")
+        || content.contains("待填写")
         || content.contains("这是计划模板")
         || content.contains("这是规格模板")
         || content.contains("这是任务模板")
@@ -3406,12 +3813,12 @@ fn repo_name_from_url(git_url: &str) -> String {
 }
 
 fn usage(command: &str) -> Result<()> {
-    Err(format!("usage: codex-auto-dev {command}").into())
+    Err(format!("usage: sandrone {command}").into())
 }
 
 fn print_help() {
     println!(
-        "Usage: codex-auto-dev <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts 20] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts 20]\n  doctor\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <plan|change-doc>\n  approve --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <plan|change-doc> --by <actor>\n  approvals --request_id <REQ-0001> [--json]\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts 20]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]"
+        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
     );
 }
 
@@ -3421,7 +3828,32 @@ fn dashboard_html() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::dashboard_html;
+    use super::{
+        AgentPhase, DEFAULT_CODE_MAX_ATTEMPTS, DEFAULT_DECOMPOSITION_MAX_ATTEMPTS,
+        DEFAULT_INTEGRATION_MAX_ATTEMPTS, DEFAULT_PLAN_MAX_ATTEMPTS, dashboard_html,
+        resolve_max_attempts,
+    };
+
+    #[test]
+    fn review_attempt_defaults_are_phase_specific_and_overridable() {
+        assert_eq!(
+            resolve_max_attempts(AgentPhase::Decomposition, None),
+            DEFAULT_DECOMPOSITION_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            resolve_max_attempts(AgentPhase::Planning, None),
+            DEFAULT_PLAN_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            resolve_max_attempts(AgentPhase::Implementation, None),
+            DEFAULT_CODE_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            resolve_max_attempts(AgentPhase::Rebase, None),
+            DEFAULT_INTEGRATION_MAX_ATTEMPTS
+        );
+        assert_eq!(resolve_max_attempts(AgentPhase::Planning, Some(9)), 9);
+    }
 
     #[test]
     fn dashboard_html_uses_list_requests_and_rich_artifact_renderers() {
@@ -3436,12 +3868,18 @@ mod tests {
         assert!(html.contains("orderedLowerTimelineStages"));
         assert!(html.contains("lowerStageMarker"));
         assert!(html.contains("updateIntegrationConnector"));
+        assert!(html.contains("request.pr?.stages?.length"));
+        assert!(html.contains("prPaneSubtitle"));
+        assert!(html.contains("kind: \"pr\""));
+        assert!(html.contains("pane.kind === \"pr\""));
+        assert!(html.contains("visibleTimelineItems(indexedStages, hasIntegration, pane.kind)"));
+        assert!(html.contains("renderArtifactTabs"));
+        assert!(html.contains("Review 结果"));
         assert!(html.contains("integration-connector-path"));
         assert!(html.contains("stroke: var(--line-strong);"));
         assert!(html.contains(".stage.branch .dot { border-color: var(--line-strong);"));
         assert!(!html.contains("stroke: #d6a31f;"));
         assert!(!html.contains("background: #e7c46a;"));
-        assert!(html.contains("isBranchStage"));
         assert!(html.contains("marked.min.js"));
         assert!(html.contains("DOMPurify"));
         assert!(html.contains("highlight.js"));
@@ -3456,6 +3894,8 @@ mod tests {
         assert!(html.contains("tag(\"pending\", \"pending\""));
         assert!(html.contains("tag(\"finish\", \"finish\""));
         assert!(html.contains("if (status === \"finished\") return \"done\";"));
+        assert!(html.contains("querySelector('[data-stage-id=\"code-review\"]')"));
+        assert!(!html.contains("querySelector('[data-stage-id=\"implementation\"]')"));
         assert!(!html.contains(
             "status === \"wait-update-pr\" || status === \"change-doc-approved\") return \"done\""
         ));

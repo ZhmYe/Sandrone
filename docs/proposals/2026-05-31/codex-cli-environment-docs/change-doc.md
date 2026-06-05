@@ -11,20 +11,20 @@
 
 ## 实现后
 
-- README 明确记录 `CODEX_AUTO_DEV_CODEX_BIN`、PATH、`CODEX_AUTO_DEV_CODEX_APP` 的解析顺序。
+- README 明确记录 `SANDRONE_CODEX_BIN`、PATH、`SANDRONE_CODEX_APP` 的解析顺序。
 - README 提供可复制的 `~/.zshrc` 配置块，并说明 `~/.zprofile`、bash 和 GUI/LaunchAgent 的差异。
 - README 说明代理变量应在启动 `tick` 的同一 shell 中设置，并会被子 agent 继承。
 
 ## 本机环境调整
 
-- 已备份并更新 `/Users/zhmye/.zshrc`，追加 `codex-auto-dev` 配置块。
-- 已为当前 macOS 登录会话设置 `CODEX_AUTO_DEV_CODEX_APP=/Applications/Codex.app`。
+- 已备份并更新 `/Users/zhmye/.zshrc`，追加 `sandrone` 配置块。
+- 已为当前 macOS 登录会话设置 `SANDRONE_CODEX_APP=/Applications/Codex.app`。
 - 已把原有 `.zshrc` 中会在非登录环境下报错的 `brew`、`npm`、`nvm` 和 OpenClaw source 行加上存在性检查。
 
 ## 验证
 
-- [x] `zsh -ic 'printf "CODEX_AUTO_DEV_CODEX_APP=%s\n" "$CODEX_AUTO_DEV_CODEX_APP"; command -v codex; codex --version'`
-- [x] `launchctl getenv CODEX_AUTO_DEV_CODEX_APP`
+- [x] `zsh -ic 'printf "SANDRONE_CODEX_APP=%s\n" "$SANDRONE_CODEX_APP"; command -v codex; codex --version'`
+- [x] `launchctl getenv SANDRONE_CODEX_APP`
 - [x] `git diff --check -- README.md`
 - [x] `python3 scripts/validate_proposals.py`
 

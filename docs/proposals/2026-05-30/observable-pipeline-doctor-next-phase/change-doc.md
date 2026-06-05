@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本次变更提升自动流程的可运行性、可追溯性和恢复质量。新增 `doctor` 自检命令，新增事件流 `.codex-auto-dev/state/events.ndjson`，并让 reviewer 通过 `recommended_next_phase` 明确下一轮应回 planning、implementation 或 blocked。
+本次变更提升自动流程的可运行性、可追溯性和恢复质量。新增 `doctor` 自检命令，新增事件流 `.sandrone/state/events.ndjson`，并让 reviewer 通过 `recommended_next_phase` 明确下一轮应回 planning、implementation 或 blocked。
 
 ## 实现前后对比
 
@@ -17,7 +17,7 @@
 
 ### Events
 
-事件流使用 append-only JSON Lines，路径为 `.codex-auto-dev/state/events.ndjson`。每行包含 `time`、`event`、`request_id`、`phase`、`status` 和 `detail`。它不替代 `requests.tsv`、`status.json` 或 review summary，只提供审计与前端增量展示入口。
+事件流使用 append-only JSON Lines，路径为 `.sandrone/state/events.ndjson`。每行包含 `time`、`event`、`request_id`、`phase`、`status` 和 `detail`。它不替代 `requests.tsv`、`status.json` 或 review summary，只提供审计与前端增量展示入口。
 
 ### Recommended Next Phase
 

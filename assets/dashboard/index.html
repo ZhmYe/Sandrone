@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codex Auto Dev Dashboard</title>
+  <title>Sandrone Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.4.1/jsoneditor.min.css">
   <style>
@@ -272,21 +272,53 @@
     .status-pill.blocked { background: var(--red-soft); color: var(--red); }
     .status-pill.done { background: var(--green-soft); color: var(--green); }
     .status-pill.running { background: var(--blue-soft); color: var(--blue); }
-    .detail {
-      min-height: 0;
-      display: grid;
-      grid-template-rows: auto auto;
-      gap: 14px;
-    }
-    .timeline {
-      background: var(--surface-strong);
-      border: 1px solid var(--line);
+	    .detail {
+	      min-height: 0;
+	      display: grid;
+	      grid-template-rows: auto auto auto;
+	      gap: 14px;
+	    }
+	    .pane-tabs {
+	      min-width: 0;
+	      display: flex;
+	      gap: 8px;
+	      overflow-x: auto;
+	      padding: 2px 2px 4px;
+	      scrollbar-gutter: stable;
+	    }
+	    .pane-tab {
+	      flex: 0 0 auto;
+	      border: 1px solid var(--line);
+	      border-radius: 8px;
+	      background: var(--surface-strong);
+	      color: var(--muted);
+	      padding: 9px 12px;
+	      font-size: 12px;
+	      font-weight: 850;
+	      box-shadow: 0 4px 14px rgba(29, 42, 61, 0.05);
+	    }
+	    .pane-tab.active {
+	      border-color: var(--blue);
+	      background: var(--blue-soft);
+	      color: var(--blue);
+	    }
+	    .pane-tab small {
+	      display: block;
+	      margin-top: 3px;
+	      font-size: 10px;
+	      font-weight: 750;
+	      color: inherit;
+	      opacity: 0.78;
+	    }
+	    .timeline {
+	      background: var(--surface-strong);
+	      border: 1px solid var(--line);
       border-radius: 8px;
       padding: 18px 16px 18px;
       overflow-x: auto;
     }
     .timeline-track {
-      min-width: 760px;
+      min-width: 640px;
       min-height: 86px;
       position: relative;
       transition: min-height 180ms ease;
@@ -321,7 +353,7 @@
     }
     .timeline-main {
       height: 86px;
-      grid-template-columns: repeat(6, minmax(96px, 1fr));
+      grid-template-columns: repeat(var(--stage-count, 5), minmax(112px, 1fr));
     }
     .timeline-main::before {
       content: "";
@@ -334,7 +366,7 @@
       z-index: 0;
     }
     .timeline-track.has-integration .timeline-main {
-      grid-template-columns: repeat(5, minmax(108px, 1fr));
+      grid-template-columns: repeat(var(--stage-count, 4), minmax(112px, 1fr));
     }
     .timeline-track.has-integration .timeline-main::before {
       left: 10%;
@@ -345,10 +377,10 @@
     }
     .timeline-track.has-integration .timeline-branch {
       display: grid;
-      width: min(560px, 76%);
+      width: min(380px, 58%);
       height: 76px;
       margin: 26px auto 0;
-      grid-template-columns: repeat(3, minmax(128px, 1fr));
+      grid-template-columns: repeat(var(--branch-stage-count, 2), minmax(128px, 1fr));
     }
     .timeline-track.has-integration .timeline-branch::before {
       content: "";
@@ -404,7 +436,7 @@
       max-height: 820px;
       align-self: start;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
       grid-template-columns: minmax(0, 1fr);
       background: var(--surface-strong);
       border: 1px solid var(--line);
@@ -428,6 +460,31 @@
       color: var(--muted);
       font-size: 12px;
       word-break: break-all;
+    }
+    .artifact-tabs {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #f8fafc;
+    }
+    .artifact-tab {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--muted);
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .artifact-tab.active {
+      border-color: var(--blue);
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+    .artifact-tab:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     .artifact-body {
       min-height: 0;
@@ -608,7 +665,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div>
-          <h1>Codex Auto Dev</h1>
+          <h1>Sandrone</h1>
           <small id="registry-path">loading</small>
         </div>
         <button class="refresh" id="refresh" title="刷新">↻</button>
@@ -625,10 +682,11 @@
       </section>
       <section class="request-strip">
         <div class="request-list" id="requests"></div>
-      </section>
-      <section class="detail">
-        <div class="timeline">
-          <div class="timeline-track">
+	      </section>
+	      <section class="detail">
+	        <div class="pane-tabs" id="pane-tabs"></div>
+	        <div class="timeline">
+	          <div class="timeline-track">
             <svg class="integration-connector" id="integration-connector" aria-hidden="true">
               <path id="integration-connector-path"></path>
             </svg>
@@ -644,6 +702,7 @@
             </div>
             <span class="status-pill" id="artifact-state">pending</span>
           </div>
+          <div class="artifact-tabs" id="artifact-tabs"></div>
           <div class="artifact-body" id="artifact-body"></div>
         </div>
       </section>
@@ -654,11 +713,12 @@
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/lib/common.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.4.1/jsoneditor.min.js"></script>
   <script>
-    const state = { data: null, project: 0, request: 0, stage: 0, attempt: 0, reviewer: 0 };
+	    const state = { data: null, project: 0, request: 0, pane: 0, stage: 0, artifactTab: "artifact", attempt: 0, reviewer: 0 };
     const els = {
       projects: document.querySelector("#projects"),
-      requests: document.querySelector("#requests"),
-      timelineTrack: document.querySelector(".timeline-track"),
+	      requests: document.querySelector("#requests"),
+	      paneTabs: document.querySelector("#pane-tabs"),
+	      timelineTrack: document.querySelector(".timeline-track"),
       integrationConnector: document.querySelector("#integration-connector"),
       integrationConnectorPath: document.querySelector("#integration-connector-path"),
       timelineMain: document.querySelector("#timeline-main"),
@@ -670,15 +730,16 @@
       artifactTitle: document.querySelector("#artifact-title"),
       artifactPath: document.querySelector("#artifact-path"),
       artifactState: document.querySelector("#artifact-state"),
+      artifactTabs: document.querySelector("#artifact-tabs"),
       artifactBody: document.querySelector("#artifact-body"),
       refresh: document.querySelector("#refresh")
     };
 
-    els.refresh.addEventListener("click", load);
-    window.addEventListener("resize", () => {
-      const request = currentRequest();
-      updateIntegrationConnector(!!request && hasIntegrationFlow(request));
-    });
+	    els.refresh.addEventListener("click", load);
+	    window.addEventListener("resize", () => {
+	      const pane = currentPane();
+	      updateIntegrationConnector(!!pane && hasIntegrationFlow(pane));
+	    });
     load();
     setInterval(load, 15000);
 
@@ -686,10 +747,12 @@
       const response = await fetch("/api/dashboard", { cache: "no-store" });
       state.data = await response.json();
       state.project = clamp(state.project, state.data.projects.length);
-      const project = currentProject();
-      state.request = clamp(state.request, project ? orderedRequests(project).length : 0);
-      render();
-    }
+	      const project = currentProject();
+	      state.request = clamp(state.request, project ? orderedRequests(project).length : 0);
+	      state.pane = clamp(state.pane, currentPanes().length);
+	      state.stage = clamp(state.stage, currentPane()?.stages?.length || 0);
+	      render();
+	    }
 
     function clamp(index, length) {
       if (length <= 0) return 0;
@@ -700,29 +763,65 @@
       return state.data && state.data.projects[state.project];
     }
 
-    function currentRequest() {
-      const project = currentProject();
-      return project && orderedRequests(project)[state.request];
-    }
+	    function currentRequest() {
+	      const project = currentProject();
+	      return project && orderedRequests(project)[state.request];
+	    }
 
-    function currentStage() {
-      const request = currentRequest();
-      return request && request.stages[state.stage];
-    }
+	    function currentPanes() {
+	      const request = currentRequest();
+      if (!request) return [];
+      const panes = [{
+        label: request.decomposition?.label || request.analysis?.label || "需求分析",
+	        subtitle: request.status || "",
+	        owner: request,
+	        kind: "analysis",
+	        stages: request.decomposition?.stages || request.analysis?.stages || request.stages || []
+	      }];
+	      (request.slices || []).forEach((slice, index) => {
+	        panes.push({
+	          label: sliceTabLabel(slice, index),
+	          subtitle: slice.status || "",
+	          owner: slice,
+	          kind: "slice",
+	          stages: slice.stages || []
+	        });
+	      });
+	      if (request.pr?.stages?.length) {
+	        panes.push({
+	          label: request.pr.label || "PR",
+	          subtitle: prPaneSubtitle(request),
+	          owner: request,
+	          kind: "pr",
+	          stages: request.pr.stages || []
+	        });
+	      }
+	      return panes;
+	    }
+
+	    function currentPane() {
+	      return currentPanes()[state.pane];
+	    }
+
+	    function currentStage() {
+	      const pane = currentPane();
+	      return pane && pane.stages[state.stage];
+	    }
 
     function render() {
       els.registryPath.textContent = state.data.registry_path;
       renderProjects();
-      renderProjectSummary();
-      renderRequests();
-      renderTimeline();
-      renderArtifact();
-    }
+	      renderProjectSummary();
+	      renderRequests();
+	      renderPaneTabs();
+	      renderTimeline();
+	      renderArtifact();
+	    }
 
     function renderProjects() {
       els.projects.innerHTML = "";
       if (!state.data.projects.length) {
-        els.projects.innerHTML = `<div class="empty">还没有 registry 记录。先运行 cad new。</div>`;
+        els.projects.innerHTML = `<div class="empty">还没有 registry 记录。先运行 sdr new。</div>`;
         return;
       }
       state.data.projects.forEach((project, index) => {
@@ -743,8 +842,10 @@
         `;
         button.addEventListener("click", () => {
           state.project = index;
-          state.request = 0;
-          state.stage = 0;
+	          state.request = 0;
+	          state.pane = 0;
+	          state.stage = 0;
+          state.artifactTab = "artifact";
           state.attempt = 0;
           state.reviewer = 0;
           render();
@@ -822,34 +923,82 @@
           <span class="status-pill ${statusClass(request.status)}">${escapeHtml(request.status)}</span>
         `;
         button.addEventListener("click", () => {
-          state.request = index;
-          state.stage = 0;
+	          state.request = index;
+	          state.pane = 0;
+	          state.stage = 0;
+          state.artifactTab = "artifact";
           state.attempt = 0;
           state.reviewer = 0;
           render();
         });
         els.requests.appendChild(button);
       });
-    }
+	    }
 
-    function renderTimeline() {
-      const request = currentRequest();
-      els.timelineMain.innerHTML = "";
-      els.timelineBranch.innerHTML = "";
-      if (!request) {
-        updateIntegrationConnector(false);
-        return;
-      }
-      const indexedStages = request.stages.map((stage, index) => ({ stage, index }));
-      const hasIntegration = hasIntegrationFlow(request);
-      els.timelineTrack.classList.toggle("has-integration", hasIntegration);
-      const visibleItems = visibleTimelineItems(indexedStages, hasIntegration);
-      if (!visibleItems.some(item => item.index === state.stage)) {
-        const fallback = visibleItems.find(item => item.stage.stage_id === request.stage) || visibleItems[0];
-        state.stage = fallback ? fallback.index : 0;
-      }
-      const mainStages = visibleItems.filter(item => !isLowerTimelineStage(item.stage.stage_id, hasIntegration));
-      const lowerStages = orderedLowerTimelineStages(visibleItems, hasIntegration);
+	    function renderPaneTabs() {
+	      const panes = currentPanes();
+	      els.paneTabs.innerHTML = "";
+	      if (!panes.length) {
+	        els.paneTabs.innerHTML = `<div class="empty">选择一个 request 查看阶段。</div>`;
+	        return;
+	      }
+	      state.pane = clamp(state.pane, panes.length);
+	      panes.forEach((pane, index) => {
+	        const button = document.createElement("button");
+	        button.className = `pane-tab ${index === state.pane ? "active" : ""}`;
+	        button.innerHTML = `${escapeHtml(pane.label)}<small>${escapeHtml(pane.subtitle)}</small>`;
+	        button.addEventListener("click", () => {
+	          state.pane = index;
+	          state.stage = 0;
+	          state.artifactTab = "artifact";
+	          state.attempt = 0;
+	          state.reviewer = 0;
+	          renderPaneTabs();
+	          renderTimeline();
+	          renderArtifact();
+	        });
+	        els.paneTabs.appendChild(button);
+	      });
+	    }
+
+	    function sliceTabLabel(slice, index) {
+	      const match = String(slice.request_id || "").match(/-S(\d+)$/);
+	      const number = match ? Number(match[1]) : index + 1;
+	      return `Slice ${number}`;
+	    }
+
+	    function prPaneSubtitle(request) {
+	      if (request.status === "finished") return "已合并";
+	      if (request.status === "wait-finish") return "PR 待合并";
+	      if (request.status === "wait-update-pr") return "待创建/更新";
+	      if (request.status === "rebase-agent-running") return "刷新中";
+	      if (request.status === "integration-review-submitted") return "集成评审中";
+	      if (request.status === "integration-review-rejected") return "需处理冲突";
+	      return request.status || "";
+	    }
+
+	    function renderTimeline() {
+	      const pane = currentPane();
+	      els.timelineMain.innerHTML = "";
+	      els.timelineBranch.innerHTML = "";
+	      if (!pane) {
+	        updateIntegrationConnector(false);
+	        return;
+	      }
+	      const indexedStages = pane.stages.map((stage, index) => ({ stage, index }));
+	      const hasIntegration = hasIntegrationFlow(pane);
+	      els.timelineTrack.classList.toggle("has-integration", hasIntegration);
+	      const visibleItems = visibleTimelineItems(indexedStages, hasIntegration, pane.kind);
+	      if (!visibleItems.some(item => item.index === state.stage)) {
+	        const currentStageId = pane.owner?.stage;
+	        const fallback = visibleItems.find(item => item.stage.stage_id === currentStageId) || visibleItems[0];
+	        state.stage = fallback ? fallback.index : 0;
+	        state.artifactTab = "artifact";
+	      }
+      const mainStages = visibleItems.filter(item => !isLowerTimelineStage(item.stage.stage_id, hasIntegration, pane.kind));
+      const lowerStages = orderedLowerTimelineStages(visibleItems, hasIntegration, pane.kind);
+      els.timelineMain.style.setProperty("--stage-count", Math.max(mainStages.length, 1));
+      els.timelineBranch.style.setProperty("--branch-stage-count", Math.max(lowerStages.length, 1));
       mainStages.forEach((item, displayIndex) => {
         els.timelineMain.appendChild(stageButton(item.stage, item.index, displayIndex + 1, false));
       });
@@ -859,29 +1008,31 @@
       updateIntegrationConnector(hasIntegration);
     }
 
-    function isBranchStage(stageId) {
-      return stageId === "pr-refresh" || stageId === "integration-review";
-    }
+	    function hasIntegrationFlow(pane) {
+	      if (pane.kind === "pr") return false;
+	      const integration = pane.stages.find(stage => stage.stage_id === "integration-review");
+	      return !!integration && (integration.review_attempts || []).length > 0;
+	    }
 
-    function hasIntegrationFlow(request) {
-      const integration = request.stages.find(stage => stage.stage_id === "integration-review");
-      return !!integration && (integration.review_attempts || []).length > 0;
-    }
-
-    function visibleTimelineItems(indexedStages, hasIntegration) {
+    function visibleTimelineItems(indexedStages, hasIntegration, paneKind) {
+      if (paneKind === "pr") return indexedStages;
       if (!hasIntegration) {
-        return indexedStages.filter(item => !isBranchStage(item.stage.stage_id));
+        return indexedStages.filter(item =>
+          item.stage.stage_id !== "pr-refresh" && item.stage.stage_id !== "integration-review"
+        );
       }
       return indexedStages.filter(item =>
-        !isBranchStage(item.stage.stage_id) || item.stage.stage_id === "pr-refresh" || item.stage.stage_id === "integration-review"
+        true
       );
     }
 
-    function isLowerTimelineStage(stageId, hasIntegration) {
+    function isLowerTimelineStage(stageId, hasIntegration, paneKind) {
+      if (paneKind === "pr") return false;
       return hasIntegration && (stageId === "pr-refresh" || stageId === "integration-review" || stageId === "finish-pr");
     }
 
-    function orderedLowerTimelineStages(visibleItems, hasIntegration) {
+    function orderedLowerTimelineStages(visibleItems, hasIntegration, paneKind) {
+      if (paneKind === "pr") return [];
       if (!hasIntegration) return [];
       return ["pr-refresh", "integration-review", "finish-pr"]
         .map(stageId => visibleItems.find(item => item.stage.stage_id === stageId))
@@ -896,11 +1047,12 @@
 
     function stageButton(stage, index, displayNumber, branch) {
         const button = document.createElement("button");
-        button.className = `stage ${branch ? "branch" : ""} ${stage.state} ${index === state.stage ? "selected" : ""}`;
+        button.className = `stage ${branch ? "branch" : ""} ${stage.state || "pending"} ${index === state.stage ? "selected" : ""}`;
         button.dataset.stageId = stage.stage_id;
         button.innerHTML = `<span class="dot">${displayNumber}</span><span class="stage-label">${escapeHtml(stage.label)}</span>`;
         button.addEventListener("click", () => {
           state.stage = index;
+          state.artifactTab = "artifact";
           state.attempt = 0;
           state.reviewer = 0;
           renderTimeline();
@@ -914,13 +1066,13 @@
         els.integrationConnectorPath.setAttribute("d", "");
         return;
       }
-      const codeStage = els.timelineMain.querySelector('[data-stage-id="code-review"]');
-      const codeDot = codeStage && codeStage.querySelector(".dot");
+      const implementationStage = els.timelineMain.querySelector('[data-stage-id="code-review"]');
+      const implementationDot = implementationStage && implementationStage.querySelector(".dot");
       const refreshStage = els.timelineBranch.querySelector('[data-stage-id="pr-refresh"]');
       const refreshDot = refreshStage && refreshStage.querySelector(".dot");
-      if (!codeStage || !codeDot || !refreshStage || !refreshDot) return;
+      if (!implementationStage || !implementationDot || !refreshStage || !refreshDot) return;
       const trackRect = els.timelineTrack.getBoundingClientRect();
-      const startRect = codeDot.getBoundingClientRect();
+      const startRect = implementationDot.getBoundingClientRect();
       const endRect = refreshDot.getBoundingClientRect();
       const startX = startRect.left + startRect.width * 0.36 - trackRect.left;
       const startY = startRect.bottom + 8 - trackRect.top;
@@ -944,16 +1096,26 @@
       if (!stage) {
         els.artifactTitle.textContent = "没有 stage";
         els.artifactPath.textContent = "";
+        els.artifactTabs.innerHTML = "";
         els.artifactBody.innerHTML = `<div class="empty">选择一个项目和 request。</div>`;
         return;
       }
-      els.artifactTitle.textContent = stage.title;
-      els.artifactPath.textContent = stage.artifact_path || "尚无文件";
-      els.artifactState.textContent = stage.state;
-      els.artifactState.className = `status-pill ${stage.state === "done" ? "done" : stage.state}`;
       if (stage.artifact_kind === "review-details") {
+        renderArtifactTabs(stage);
+        els.artifactTitle.textContent = artifactHeading(stage, stage, "Review 结果");
+        els.artifactPath.textContent = stage.artifact_path || "尚无 review detail";
+        els.artifactState.textContent = stage.state;
+        els.artifactState.className = `status-pill ${stage.state === "done" ? "done" : stage.state}`;
         renderReviewStage(stage);
-      } else if (stage.artifact_kind === "json" && stage.content) {
+        return;
+      }
+      renderArtifactTabs(stage);
+      els.artifactTitle.textContent = artifactHeading(stage, stage, "阶段文件");
+      els.artifactPath.textContent = stage.artifact_path || "尚无文件";
+      const displayState = stage.state || "pending";
+      els.artifactState.textContent = displayState;
+      els.artifactState.className = `status-pill ${displayState === "done" ? "done" : displayState}`;
+      if (stage.artifact_kind === "json" && stage.content) {
         els.artifactBody.innerHTML = `<div class="json-viewer" data-json-stage></div>`;
         mountJsonViewer(els.artifactBody.querySelector("[data-json-stage]"), stage.content);
       } else if (stage.content) {
@@ -963,9 +1125,25 @@
       }
     }
 
+    function artifactHeading(stage, artifactStage, suffix) {
+      const paneLabel = currentPane()?.label || "";
+      const artifactName = artifactStage?.artifact_name || artifactStage?.title || stage.title;
+      return [paneLabel, artifactName, suffix].filter(Boolean).join(" · ");
+    }
+
+    function renderArtifactTabs(stage) {
+      const isReviewStage = stage.artifact_kind === "review-details";
+      els.artifactTabs.innerHTML = `
+        <button class="artifact-tab active" data-artifact-tab="artifact">
+          ${isReviewStage ? "Review 结果" : "阶段文件"}
+        </button>
+      `;
+      state.artifactTab = "artifact";
+    }
+
     function renderReviewStage(stage) {
       if (!stage.review_attempts.length) {
-        els.artifactBody.innerHTML = `<div class="empty">这个 review stage 还没有 detail JSON。</div>`;
+        els.artifactBody.innerHTML = `<div class="empty">这个阶段还没有 review detail JSON。</div>`;
         return;
       }
       state.attempt = clamp(state.attempt, stage.review_attempts.length);

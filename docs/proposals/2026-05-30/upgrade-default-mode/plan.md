@@ -13,11 +13,11 @@
 
 - `src/main.rs`: `upgrade_workspace`、默认资产映射、example 刷新和 default 覆盖函数。
 - `tests/cli_flow.rs`: new/upgrade/upgrade default 集成测试。
-- `README.md` 与 `skills/codex-auto-dev-workflow/SKILL.md`: 说明升级语义。
+- `README.md` 与 `skills/sandrone/SKILL.md`: 说明升级语义。
 
 ## 兼容性
 
-普通 `upgrade` 更保守，不再为缺失的正式 connector/prompt/schema 自动写默认文件。旧 workspace 如果希望直接使用默认实现，需要显式运行 `codex-auto-dev upgrade --default`。
+普通 `upgrade` 更保守，不再为缺失的正式 connector/prompt/schema 自动写默认文件。旧 workspace 如果希望直接使用默认实现，需要显式运行 `sandrone upgrade --default`。
 
 ## 测试策略
 

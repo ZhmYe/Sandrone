@@ -18,7 +18,7 @@ This change strengthens generated planning artifacts and Codex workflow instruct
 - Added CLI integration tests for from-scratch planning, orphan worktree start, and explicit GitHub repo name usage.
 - Added target project process compliance requirements to generated plans, tasks, handoffs, skill text, and change docs.
 - Added change-doc sections for target project change docs, pre-commit, documentation checks, tests, and AI review findings.
-- Extracted the workflow guidance into `skills/codex-auto-dev-workflow/SKILL.md` so it can be installed as a real Codex skill.
+- Extracted the workflow guidance into `skills/sandrone/SKILL.md` so it can be installed as a real Codex skill.
 - Updated the CLI to embed and copy the tracked skill file instead of maintaining a separate Rust string literal.
 - Added `scripts/install.sh` for local one-command installation of the skill and CLI.
 - Added `scripts/bootstrap.sh` for `curl -fsSL ... | sh` remote installation from GitHub.
@@ -39,9 +39,9 @@ This change strengthens generated planning artifacts and Codex workflow instruct
 - [x] Bootstrap help test
 - [x] Skill install-first wording test
 - [x] Workspace naming assertions for clone and from-scratch modes
-- [x] Smoke test `codex-auto-dev new`
-- [x] Smoke test `codex-auto-dev plan -> start`
-- [x] Smoke test `codex-auto-dev finish`
+- [x] Smoke test `sandrone new`
+- [x] Smoke test `sandrone plan -> start`
+- [x] Smoke test `sandrone finish`
 
 ## Risks And Follow-Ups
 

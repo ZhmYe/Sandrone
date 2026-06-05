@@ -2,7 +2,7 @@
 
 ## 背景
 
-自动 code-review 有两个需要收紧的问题。第一，TestReviewer 和 DesignReviewer 都是独立门禁，但默认 reviewer 环境会暴露原始 change 目录；当 TestReviewer 写出 detail 后，DesignReviewer 理论上可以读取它，历史 review summary/detail 也可能影响当前轮判断。第二，`status.json` 已经进入 `waiting-finish` 时，`list` 和 `status` 仍可能直接读取滞后的 `.codex-auto-dev/state/requests.tsv`，导致用户看到 `implementation-agent-running`。
+自动 code-review 有两个需要收紧的问题。第一，TestReviewer 和 DesignReviewer 都是独立门禁，但默认 reviewer 环境会暴露原始 change 目录；当 TestReviewer 写出 detail 后，DesignReviewer 理论上可以读取它，历史 review summary/detail 也可能影响当前轮判断。第二，`status.json` 已经进入 `waiting-finish` 时，`list` 和 `status` 仍可能直接读取滞后的 `.sandrone/state/requests.tsv`，导致用户看到 `implementation-agent-running`。
 
 ## 目标
 
@@ -20,14 +20,14 @@
 
 ## 行为要求
 
-- reviewer 环境中的 `CODEX_AUTO_DEV_CHANGE_PATH` 指向隔离 context，而不是原始 change 目录。
-- reviewer 环境提供 `CODEX_AUTO_DEV_REVIEW_CONTEXT` 和 `CODEX_AUTO_DEV_REVIEW_FORBIDDEN_PATHS`。
+- reviewer 环境中的 `SANDRONE_CHANGE_PATH` 指向隔离 context，而不是原始 change 目录。
+- reviewer 环境提供 `SANDRONE_REVIEW_CONTEXT` 和 `SANDRONE_REVIEW_FORBIDDEN_PATHS`。
 - 隔离 context 只复制 `request.md`、`plan.md`、`change-doc.md`、`status.json` 和 `approvals/`。
 - 原始 review detail 和 summary 仍写入 canonical `docs/changes/<name>/reviews/<stage>/...`。
 - `list` 和 `status` 必须同步 `status.json` 中更靠后的状态、branch 和 worktree 后再输出。
 
 ## 验证
 
-- 构造历史 code-review detail 和 summary，确认 TestReviewer 和 DesignReviewer 看到的 `CODEX_AUTO_DEV_CHANGE_PATH` 中没有 `reviews/`。
+- 构造历史 code-review detail 和 summary，确认 TestReviewer 和 DesignReviewer 看到的 `SANDRONE_CHANGE_PATH` 中没有 `reviews/`。
 - 确认新 review detail 仍写入 canonical review 目录。
 - 构造 `requests.tsv=implementation-agent-running`、`status.json=waiting-finish`，确认 `status REQ` 和 `list` 都显示 `waiting-finish`，且中央索引被同步。

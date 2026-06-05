@@ -6,7 +6,7 @@ The project should start as a terminal-first Rust CLI framework that wraps any g
 
 ## Scope
 
-- Create a Rust binary named `codex-auto-dev`.
+- Create a Rust binary named `sandrone`.
 - Support `init <git-url>` to clone a target repository into `dev/repo`.
 - Support `new <project-name>` for from-scratch project creation.
 - Support manual requirements through `request <title> [body]`.
@@ -31,7 +31,7 @@ The project should start as a terminal-first Rust CLI framework that wraps any g
 - [x] `cargo fmt --check` passes.
 - [x] A proposal index exists at `proposal.json`.
 - [x] The framework creates `tools/issue-update.sh`.
-- [x] The framework creates `skills/codex-auto-dev-workflow/SKILL.md`.
+- [x] The framework creates `skills/sandrone/SKILL.md`.
 - [x] The framework supports from-scratch projects through `new`.
 - [x] The framework supports manual requirements through `request`.
 - [x] The framework supports CodeGraph documentation generation.

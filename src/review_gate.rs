@@ -31,10 +31,7 @@ pub(crate) fn plan_review(args: &[String]) -> Result<()> {
             "  review summary: {}/reviews/plan-review/summary.json",
             request.change_path
         );
-        println!(
-            "  approval: {}",
-            approval_file_path(&request, "plan").display()
-        );
+        println!("  gate state: {}/status.json", request.change_path);
         Ok(())
     } else {
         if review_gate_unavailable(&results) {
@@ -59,6 +56,78 @@ pub(crate) fn plan_review(args: &[String]) -> Result<()> {
     }
 }
 
+pub(crate) fn decomposition_review(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, &request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    ensure_change_packet(&request)?;
+    let decomposition_path =
+        existing_or_preferred_request_artifact_path(&request, "decomposition.md");
+    if !decomposition_path.exists() {
+        return Err(format!(
+            "{} has no decomposition artifact. Run: sandrone decompose --request_id {}",
+            request.request_id, request.request_id
+        )
+        .into());
+    }
+
+    let reviewers = [ReviewDefinition {
+        name: "DecompositionReviewer",
+        tool: DECOMPOSITION_REVIEW_TOOL,
+        file_stem: "decomposition-reviewer",
+    }];
+    let results = run_review_stage(&request, "decomposition-review", &reviewers)?;
+    if reviews_approved(&results) {
+        approve_gate_from_review(
+            &mut requests,
+            index,
+            &mut request,
+            "decomposition",
+            "DecompositionReviewer",
+            "decomposition-review",
+            "DecompositionReviewer approved the request decomposition gate",
+        )?;
+        let mut refreshed_requests = load_requests()?;
+        if let Some(parent_index) = find_request_index(&refreshed_requests, &request_id) {
+            let preflight = assess_repository_before_planning()?;
+            if materialize_slices_for_parent(&mut refreshed_requests, parent_index, &preflight)? {
+                save_requests(&refreshed_requests)?;
+            }
+        }
+        println!("Decomposition review approved for {request_id}");
+        println!(
+            "  review summary: {}/reviews/decomposition-review/summary.json",
+            request.change_path
+        );
+        println!("  gate state: {}/status.json", request.change_path);
+        Ok(())
+    } else {
+        if review_gate_unavailable(&results) {
+            let reason = review_gate_unavailable_reason("decomposition-review", &results);
+            mark_blocked(&mut requests, index, &mut request, "decomposition", &reason)?;
+            return Err(format!(
+                "{} review gate unavailable: {reason}",
+                rejected_reviewers(&results).join(", ")
+            )
+            .into());
+        }
+        mark_review_rejected(
+            &mut requests,
+            index,
+            &mut request,
+            "decomposition",
+            "decomposition-review",
+            "decomposition-review rejected; return to decomposition",
+        )?;
+        let rejected = rejected_reviewers(&results);
+        Err(format!("{} rejected decomposition review", rejected.join(", ")).into())
+    }
+}
+
 pub(crate) fn code_review(args: &[String]) -> Result<()> {
     ensure_initialized()?;
     ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
@@ -70,9 +139,31 @@ pub(crate) fn code_review(args: &[String]) -> Result<()> {
     ensure_change_packet(&request)?;
     ensure_gate_approved(&request, "plan")?;
     if request.worktree_path.trim().is_empty() {
-        return Err(
-            format!("{request_id} has no worktree. Run codex-auto-dev start first.").into(),
+        return Err(format!("{request_id} has no worktree. Run sandrone start first.").into());
+    }
+    if !Path::new(CHECK_FORMAT_TOOL).exists() {
+        let reason = format!(
+            "{CHECK_FORMAT_TOOL} does not exist; run sandrone upgrade or provide a replacement check connector"
         );
+        mark_blocked(
+            &mut requests,
+            index,
+            &mut request,
+            "implementation",
+            &reason,
+        )?;
+        return Err(reason.into());
+    }
+    if let Some(reason) = run_check_format_gate(&request)? {
+        mark_review_rejected(
+            &mut requests,
+            index,
+            &mut request,
+            "implementation",
+            "code-review",
+            &reason,
+        )?;
+        return Err(format!("format check failed before code-review: {reason}").into());
     }
 
     let reviewers = [
@@ -98,19 +189,20 @@ pub(crate) fn code_review(args: &[String]) -> Result<()> {
             "code-review",
             "TestReviewer and DesignReviewer approved the code review gate",
         )?;
-        mark_wait_update_pr_by_id(
-            &request_id,
-            "code-review approved; waiting for PR creation or update",
-        )?;
+        if is_slice_request(&request) {
+            mark_slice_finished_by_id(&request_id, "code-review approved; slice finished")?;
+        } else {
+            mark_wait_update_pr_by_id(
+                &request_id,
+                "code-review approved; waiting for PR creation or update",
+            )?;
+        }
         println!("Code review approved for {request_id}");
         println!(
             "  review summary: {}/reviews/code-review/summary.json",
             request.change_path
         );
-        println!(
-            "  approval: {}",
-            approval_file_path(&request, "change-doc").display()
-        );
+        println!("  gate state: {}/status.json", request.change_path);
         Ok(())
     } else {
         if review_gate_unavailable(&results) {
@@ -175,9 +267,7 @@ pub(crate) fn integration_review(args: &[String]) -> Result<()> {
     ensure_change_packet(&request)?;
     ensure_gate_approved(&request, "plan")?;
     if request.worktree_path.trim().is_empty() {
-        return Err(
-            format!("{request_id} has no worktree. Run codex-auto-dev start first.").into(),
-        );
+        return Err(format!("{request_id} has no worktree. Run sandrone start first.").into());
     }
 
     let reviewers = [ReviewDefinition {
@@ -205,10 +295,7 @@ pub(crate) fn integration_review(args: &[String]) -> Result<()> {
             "  review summary: {}/reviews/integration-review/summary.json",
             request.change_path
         );
-        println!(
-            "  approval: {}",
-            approval_file_path(&request, "change-doc").display()
-        );
+        println!("  gate state: {}/status.json", request.change_path);
         Ok(())
     } else {
         if review_gate_unavailable(&results) {
@@ -244,6 +331,98 @@ pub(crate) fn integration_review(args: &[String]) -> Result<()> {
         let rejected = rejected_reviewers(&results);
         Err(format!("{} rejected integration review", rejected.join(", ")).into())
     }
+}
+
+fn run_check_format_gate(request: &Request) -> Result<Option<String>> {
+    let record_path = Path::new(&request.change_path).join("checks/format-check.md");
+    if let Some(parent) = record_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let output = Command::new("sh")
+        .arg(CHECK_FORMAT_TOOL)
+        .arg("--check")
+        .current_dir(".")
+        .env("SANDRONE_REQUEST_ID", &request.request_id)
+        .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("SANDRONE_REQUEST_SOURCE", &request.source)
+        .env("SANDRONE_REQUEST_TITLE", &request.title)
+        .env("SANDRONE_REQUEST_URL", &request.url)
+        .env("SANDRONE_BRANCH", &request.branch)
+        .env(
+            "SANDRONE_WORKTREE",
+            absolute_path_string(&request.worktree_path),
+        )
+        .env(
+            "SANDRONE_CHANGE_PATH",
+            absolute_path_string(&request.change_path),
+        )
+        .env(
+            "SANDRONE_FORMAT_CHECK_RECORD",
+            absolute_path_string(&record_path),
+        )
+        .envs(proxy_env())
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let status = if output.status.success() {
+        "passed"
+    } else {
+        "failed"
+    };
+    let exit_code = output
+        .status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "signal".to_string());
+    fs::write(
+        &record_path,
+        render_check_format_record(request, status, &exit_code, &stdout, &stderr),
+    )?;
+    if output.status.success() {
+        append_event(
+            "format_check_passed",
+            &request.request_id,
+            "code-review",
+            "format-check-passed",
+            &format!("record={}", record_path.display()),
+        )?;
+        Ok(None)
+    } else {
+        let diagnostic = review_diagnostic_excerpt(&format!("{stdout}\n{stderr}"));
+        let reason = format!(
+            "format check failed before code-review; return to implementation. See {}. Diagnostic: {}",
+            record_path.display(),
+            fallback_empty(&diagnostic, "check-format exited non-zero")
+        );
+        append_event(
+            "format_check_failed",
+            &request.request_id,
+            "code-review",
+            "code-review-rejected",
+            &reason,
+        )?;
+        Ok(Some(reason))
+    }
+}
+
+fn render_check_format_record(
+    request: &Request,
+    status: &str,
+    exit_code: &str,
+    stdout: &str,
+    stderr: &str,
+) -> String {
+    format!(
+        "# Format Check\n\n- Request ID: `{}`\n- Stage: `code-review preflight`\n- Mode: `--check`\n- Status: `{}`\n- exit code: {}\n- Worktree: `{}`\n- Tool: `{}`\n- Updated at: `{}`\n\n## Stdout\n\n```text\n{}\n```\n\n## Stderr\n\n```text\n{}\n```\n",
+        request.request_id,
+        status,
+        exit_code,
+        request.worktree_path,
+        CHECK_FORMAT_TOOL,
+        now_string(),
+        stdout.trim_end(),
+        stderr.trim_end(),
+    )
 }
 
 fn run_review_stage(
@@ -297,56 +476,74 @@ fn run_single_reviewer(
         let output = Command::new("sh")
             .arg(reviewer.tool)
             .current_dir(".")
-            .env("CODEX_AUTO_DEV_REVIEW_STAGE", stage)
-            .env("CODEX_AUTO_DEV_REVIEWER", reviewer.name)
-            .env("CODEX_AUTO_DEV_WORKSPACE", absolute_path_string("."))
-            .env("CODEX_AUTO_DEV_TARGET_REPO", absolute_path_string(DEV_REPO))
-            .env("CODEX_AUTO_DEV_REQUEST_ID", &request.request_id)
-            .env("CODEX_AUTO_DEV_REQUEST_EXTERNAL_ID", &request.external_id)
-            .env("CODEX_AUTO_DEV_REQUEST_SOURCE", &request.source)
-            .env("CODEX_AUTO_DEV_REQUEST_TITLE", &request.title)
-            .env("CODEX_AUTO_DEV_REQUEST_BODY", &request.body)
-            .env("CODEX_AUTO_DEV_REQUEST_URL", &request.url)
-            .env("CODEX_AUTO_DEV_CHANGE_PATH", &review_context_string)
-            .env("CODEX_AUTO_DEV_REVIEW_CONTEXT", &review_context_string)
+            .env("SANDRONE_REVIEW_STAGE", stage)
+            .env("SANDRONE_REVIEWER", reviewer.name)
+            .env("SANDRONE_WORKSPACE", absolute_path_string("."))
+            .env("SANDRONE_ENV_FILE", absolute_path_string(".env"))
+            .env("SANDRONE_TARGET_REPO", absolute_path_string(DEV_REPO))
+            .env("SANDRONE_REQUEST_ID", &request.request_id)
+            .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+            .env("SANDRONE_REQUEST_SOURCE", &request.source)
+            .env("SANDRONE_REQUEST_TITLE", &request.title)
+            .env("SANDRONE_REQUEST_BODY", &request.body)
+            .env("SANDRONE_REQUEST_URL", &request.url)
+            .env("SANDRONE_CHANGE_PATH", &review_context_string)
+            .env("SANDRONE_REVIEW_CONTEXT", &review_context_string)
             .env(
-                "CODEX_AUTO_DEV_CANONICAL_CHANGE_PATH",
+                "SANDRONE_CANONICAL_CHANGE_PATH",
                 absolute_path_string(request.change_path.as_str()),
             )
+            .env("SANDRONE_REVIEW_FORBIDDEN_PATHS", forbidden_review_paths)
             .env(
-                "CODEX_AUTO_DEV_REVIEW_FORBIDDEN_PATHS",
-                forbidden_review_paths,
-            )
-            .env(
-                "CODEX_AUTO_DEV_REQUEST",
+                "SANDRONE_REQUEST",
                 absolute_path_string(review_context.join("request.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_ISSUE",
+                "SANDRONE_ISSUE",
                 absolute_path_string(review_context.join("request.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_SPEC",
+                "SANDRONE_SPEC",
                 absolute_path_string(review_context.join("plan.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_PLAN",
+                "SANDRONE_PLAN",
                 absolute_path_string(review_context.join("plan.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_TASKS",
+                "SANDRONE_DECOMPOSITION",
+                absolute_path_string(review_context.join("decomposition.md")),
+            )
+            .env(
+                "SANDRONE_DAG",
+                absolute_path_string(review_context.join("dag.json")),
+            )
+            .env(
+                "SANDRONE_CODEGRAPH_CONTEXT",
+                absolute_path_string(review_context.join("codegraph-context.md")),
+            )
+            .env(
+                "SANDRONE_OBSIDIAN_NOTE",
+                absolute_path_string(review_context.join("obsidian-change-trace.md")),
+            )
+            .env(
+                "SANDRONE_OBSIDIAN_PROJECT",
+                absolute_path_string(review_context.join("obsidian-project.md")),
+            )
+            .env(
+                "SANDRONE_TASKS",
                 absolute_path_string(review_context.join("plan.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_CHANGE_DOC",
+                "SANDRONE_CHANGE_DOC",
                 absolute_path_string(review_context.join("change-doc.md")),
             )
             .env(
-                "CODEX_AUTO_DEV_WORKTREE",
+                "SANDRONE_WORKTREE",
                 absolute_path_string(request.worktree_path.as_str()),
             )
             .env(
-                "CODEX_AUTO_DEV_REVIEW_SCHEMA",
+                "SANDRONE_REVIEW_SCHEMA",
                 absolute_path_string(REVIEW_SCHEMA),
             )
             .output();
@@ -422,7 +619,7 @@ fn prepare_review_context(
     reviewer: &ReviewDefinition,
     attempt: u32,
 ) -> Result<PathBuf> {
-    let context = Path::new(".codex-auto-dev/state/review-contexts")
+    let context = Path::new(".sandrone/state/review-contexts")
         .join(&request.request_id)
         .join(stage)
         .join(format!("{attempt:03}"))
@@ -431,22 +628,31 @@ fn prepare_review_context(
         fs::remove_dir_all(&context)?;
     }
     fs::create_dir_all(&context)?;
-    for artifact in ["request.md", "plan.md", "change-doc.md", "status.json"] {
-        let source = Path::new(&request.change_path).join(artifact);
+    for artifact in [
+        "request.md",
+        "plan.md",
+        "decomposition.md",
+        "decomposition.json",
+        "dag.json",
+        "change-doc.md",
+        "status.json",
+    ] {
+        let source = review_context_artifact_source(request, artifact);
         if source.exists() {
             fs::copy(&source, context.join(artifact))?;
         }
     }
-    let approvals_source = Path::new(&request.change_path).join("approvals");
-    if approvals_source.exists() {
-        let approvals_target = context.join("approvals");
-        fs::create_dir_all(&approvals_target)?;
-        for entry in fs::read_dir(approvals_source)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                fs::copy(entry.path(), approvals_target.join(entry.file_name()))?;
-            }
-        }
+    let codegraph_context = Path::new("obsidian/codegraph/context.md");
+    if codegraph_context.exists() {
+        fs::copy(codegraph_context, context.join("codegraph-context.md"))?;
+    }
+    let obsidian_note = obsidian_request_note_path(request);
+    if obsidian_note.exists() {
+        fs::copy(obsidian_note, context.join("obsidian-change-trace.md"))?;
+    }
+    let obsidian_project = Path::new(OBSIDIAN_PROJECT_NOTE);
+    if obsidian_project.exists() {
+        fs::copy(obsidian_project, context.join("obsidian-project.md"))?;
     }
     Ok(context)
 }
@@ -505,9 +711,11 @@ fn default_recommended_next_phase(
 ) -> &'static str {
     if gate_unavailable {
         "blocked"
+    } else if approved && reviewer == "DecompositionReviewer" {
+        "planning"
     } else if approved {
         "implementation"
-    } else if reviewer == "PlanReviewer" {
+    } else if matches!(reviewer, "PlanReviewer" | "DecompositionReviewer") {
         "planning"
     } else {
         "implementation"
@@ -546,7 +754,7 @@ pub(crate) fn review_diagnostic_excerpt(detail: &str) -> String {
 
 fn rejected_review_json(reviewer: &str, title: &str, detail: &str) -> String {
     format!(
-        "{{\n  \"reviewer\": \"{}\",\n  \"approved\": false,\n  \"gate_unavailable\": true,\n  \"decision\": \"rejected\",\n  \"recommended_next_phase\": \"blocked\",\n  \"summary\": \"{}\",\n  \"process\": [\"review tool failure was converted into a blocking finding\"],\n  \"critical\": [{{ \"title\": \"{}\", \"evidence\": \"{}\", \"impact\": \"review gate cannot make a reliable approval decision\", \"required_fix\": \"Fix the reviewer tool or return valid structured review JSON.\", \"suggested_change\": \"Inspect the reviewer script stderr/stdout, restore the configured model backend, and make stdout exactly one JSON object matching tools/schemas/review-result.schema.json.\", \"verification\": \"Rerun the same codex-auto-dev review command and confirm the detail JSON validates and gate_unavailable is false.\" }}],\n  \"high\": [],\n  \"warning\": [],\n  \"info\": []\n}}",
+        "{{\n  \"reviewer\": \"{}\",\n  \"approved\": false,\n  \"gate_unavailable\": true,\n  \"decision\": \"rejected\",\n  \"recommended_next_phase\": \"blocked\",\n  \"summary\": \"{}\",\n  \"process\": [\"review tool failure was converted into a blocking finding\"],\n  \"critical\": [{{ \"title\": \"{}\", \"evidence\": \"{}\", \"impact\": \"review gate cannot make a reliable approval decision\", \"required_fix\": \"Fix the reviewer tool or return valid structured review JSON.\", \"suggested_change\": \"Inspect the reviewer script stderr/stdout, restore the configured model backend, and make stdout exactly one JSON object matching tools/schemas/review-result.schema.json.\", \"verification\": \"Rerun the same Sandrone review command and confirm the detail JSON validates and gate_unavailable is false.\" }}],\n  \"high\": [],\n  \"warning\": [],\n  \"info\": []\n}}",
         json_escape(reviewer),
         json_escape(title),
         json_escape(title),
@@ -615,7 +823,7 @@ fn next_review_attempt(details_dir: &Path) -> Result<u32> {
 }
 
 fn update_change_doc_review_section(request: &Request) -> Result<()> {
-    let path = Path::new(&request.change_path).join("change-doc.md");
+    let path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
     if !path.exists() {
         return Ok(());
     }
@@ -630,7 +838,12 @@ fn update_change_doc_review_section(request: &Request) -> Result<()> {
 
 fn render_review_results_section(request: &Request) -> String {
     let mut lines = vec!["## Review 结果".to_string(), String::new()];
-    for stage in ["plan-review", "code-review", "integration-review"] {
+    for stage in [
+        "decomposition-review",
+        "plan-review",
+        "code-review",
+        "integration-review",
+    ] {
         let summary_path = Path::new(&request.change_path)
             .join("reviews")
             .join(stage)
@@ -644,6 +857,7 @@ fn render_review_results_section(request: &Request) -> String {
         lines.push(format!(
             "### {}",
             match stage {
+                "decomposition-review" => "Decomposition Review",
                 "plan-review" => "Plan Review",
                 "code-review" => "Code Review",
                 "integration-review" => "Integration Review",
@@ -659,6 +873,7 @@ fn render_review_results_section(request: &Request) -> String {
         lines.push(format!("- 详情: `reviews/{stage}/summary.json`"));
         for reviewer in [
             "PlanReviewer",
+            "DecompositionReviewer",
             "TestReviewer",
             "DesignReviewer",
             "IntegrationReviewer",
@@ -759,15 +974,15 @@ fn approve_gate_from_review(
     source: &str,
     comment: &str,
 ) -> Result<()> {
-    write_approval_record(request, gate, "approved", by, source, comment)?;
     request.status = format!("{}-approved", gate_status_prefix(gate));
     request.updated_at = now_string();
+    write_approval_record(request, gate, "approved", by, source, comment)?;
     requests[index] = request.clone();
     save_requests(requests)?;
-    let stage = if gate == "plan" {
-        "planning"
-    } else {
-        "implementation"
+    let stage = match gate {
+        "decomposition" => "decomposition",
+        "plan" => "planning",
+        _ => "implementation",
     };
     write_status_json(request, stage, &request.status, comment)?;
     append_event(

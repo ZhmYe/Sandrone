@@ -30,7 +30,7 @@
   - 覆盖远端更新导致 plan 被阻止。
   - 覆盖 finish commit/push/request branch。
   - 覆盖 PR connector 调用、PR body issue 关联和 URL 输出。
-- 修改 `README.md` 和 `skills/codex-auto-dev-workflow/SKILL.md`:
+- 修改 `README.md` 和 `skills/sandrone/SKILL.md`:
   - 推荐用户先创建远端仓库再 clone。
   - 说明 plan 前 pull/CodeGraph 检查。
   - 说明 finish 交付到 request 分支并准备 PR。

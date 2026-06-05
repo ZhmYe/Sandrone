@@ -2,7 +2,7 @@
 
 ## 背景
 
-旧 workspace 运行 `codex-auto-dev upgrade` 后，部分 request 的 `agent-journal.md` 被重写成初始模板，导致历史执行记录丢失。原因是 journal 初始说明里包含 `agent 每轮`，升级逻辑把这段正常说明误判为“可覆盖模板标记”。
+旧 workspace 运行 `sandrone upgrade` 后，部分 request 的 `agent-journal.md` 被重写成初始模板，导致历史执行记录丢失。原因是 journal 初始说明里包含 `agent 每轮`，升级逻辑把这段正常说明误判为“可覆盖模板标记”。
 
 ## 需求
 

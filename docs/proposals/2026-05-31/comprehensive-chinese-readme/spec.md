@@ -14,7 +14,7 @@
 - 说明安装、Codex CLI 环境变量、代理、CodeGraph、旧 workspace upgrade。
 - 记录 connector contract，包括 issue update、issue agent、reviewer JSON 和 PR connector。
 - 保留框架仓库治理和验证命令。
-- 同步 CLI help，让 README 中记录的已实现状态与校验命令能在 `codex-auto-dev --help` 中被发现。
+- 同步 CLI help，让 README 中记录的已实现状态与校验命令能在 `sandrone --help` 中被发现。
 
 ## 非目标
 
@@ -28,6 +28,6 @@
 
 - README 是完整中文手册，包含项目作用、流程可视化、命令、使用方式、注意事项、配置和环境。
 - README 中的命令与当前 CLI 实现保持一致，包含已实现的 `list`、`status`、`validate` 等状态入口。
-- `codex-auto-dev --help` 列出 `list`、`status [REQ-0001]` 和 `validate`。
+- `sandrone --help` 列出 `list`、`status [REQ-0001]` 和 `validate`。
 - proposal 索引通过校验。
 - Markdown 不含尾随空白。

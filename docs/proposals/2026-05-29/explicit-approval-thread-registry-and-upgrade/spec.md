@@ -6,7 +6,7 @@
 
 ## 用户目标
 
-用户希望 `codex-auto-dev` 把审批变成显式、可审计、可机器读取的状态文件；把每个 request 的 planning / implementation thread 记录下来；并提供 `upgrade` 命令，让旧 workspace 补齐新的 approval、session 和中文模板结构。
+用户希望 `sandrone` 把审批变成显式、可审计、可机器读取的状态文件；把每个 request 的 planning / implementation thread 记录下来；并提供 `upgrade` 命令，让旧 workspace 补齐新的 approval、session 和中文模板结构。
 
 ## 功能要求
 
@@ -17,7 +17,7 @@
 - `finish` 必须检查 `change-doc` approval 已批准且 artifact 未变更。
 - approval 文件必须包含 `artifact_sha256`，审批后文档被改动时，后续命令必须报 stale。
 - `session` 命令允许登记 Codex thread ID / URL / status。
-- `sessions --json` 输出 `.codex-auto-dev/sessions.json`，供后续前端或机器人展示。
+- `sessions --json` 输出 `.sandrone/sessions.json`，供后续前端或机器人展示。
 - `upgrade --dry-run` 只显示将执行的迁移。
 - `upgrade` 补齐 schema version、session registry、approval 目录、最新 skill 和中文模板。
 - `upgrade` 不得覆盖目标仓库、worktree、用户改过的 issue connector，以及已填写的计划或变更文档。

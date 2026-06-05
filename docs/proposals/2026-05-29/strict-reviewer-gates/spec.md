@@ -10,8 +10,8 @@
 
 ## 功能要求
 
-- 新增 `codex-auto-dev plan-review --request_id <id>`。
-- 新增 `codex-auto-dev code-review --request_id <id>`。
+- 新增 `sandrone plan-review --request_id <id>`。
+- 新增 `sandrone code-review --request_id <id>`。
 - 新增可替换 reviewer 连接器:
   - `tools/plan-review.sh`
   - `tools/test-review.sh`

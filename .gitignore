@@ -5,11 +5,13 @@ target/
 data/
 work-items/
 worktrees/
-.codex-auto-dev/
+.sandrone/
 .codegraph/
 .superpowers/
 dev/
 tools/
 skills/*
-!skills/codex-auto-dev-workflow/
-!skills/codex-auto-dev-workflow/SKILL.md
+!skills/sandrone/
+!skills/sandrone/SKILL.md
+!skills/obsidian-change-trace/
+!skills/obsidian-change-trace/**

@@ -15,16 +15,16 @@
     <h1>Codex CLI Environment Docs</h1>
     <p>本 proposal 为 README 增加 Codex CLI 环境变量配置说明，覆盖终端、GUI、LaunchAgent 和代理继承场景。</p>
     <h2>关键配置</h2>
-    <pre><code># BEGIN codex-auto-dev
-export CODEX_AUTO_DEV_CODEX_APP="/Applications/Codex.app"
+    <pre><code># BEGIN Sandrone
+export SANDRONE_CODEX_APP="/Applications/Codex.app"
 if [ -d "/Applications/Codex.app/Contents/Resources" ]; then
   case ":$PATH:" in
     *":/Applications/Codex.app/Contents/Resources:"*) ;;
     *) export PATH="/Applications/Codex.app/Contents/Resources:$PATH" ;;
   esac
 fi
-# END codex-auto-dev</code></pre>
+# END Sandrone</code></pre>
     <h2>验证</h2>
-    <p>使用 <code>codex --version</code>、<code>codex-auto-dev doctor</code> 和 proposal 校验脚本确认配置与文档有效。</p>
+    <p>使用 <code>codex --version</code>、<code>sandrone doctor</code> 和 proposal 校验脚本确认配置与文档有效。</p>
   </body>
 </html>

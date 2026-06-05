@@ -2,7 +2,7 @@
 
 ## 实施步骤
 
-1. 增加默认脚本生成测试，要求 agent/reviewer connector 支持 `CODEX_AUTO_DEV_CODEX_BIN` 和 `CODEX_AUTO_DEV_CODEX_APP`，且不写死 app 路径。
+1. 增加默认脚本生成测试，要求 agent/reviewer connector 支持 `SANDRONE_CODEX_BIN` 和 `SANDRONE_CODEX_APP`，且不写死 app 路径。
 2. 增加 resume 回归测试，证明 blocked request 被写回可派发状态并能被 `tick --request_id` 派发。
 3. 在默认 agent/reviewer scripts 中加入 `resolve_codex_bin`，按 env、PATH、app bundle 顺序解析。
 4. 修改 `resume`，对 blocked request 更新 `requests.tsv`、`status.json`、session 和事件流。
@@ -14,7 +14,7 @@
 - `src/main.rs`: 默认 connector 生成、resume 状态恢复。
 - `tests/cli_flow.rs`: 默认脚本生成测试和 resume 派发测试。
 - `README.md`: connector 配置与 resume 行为说明。
-- `skills/codex-auto-dev-workflow/SKILL.md`: skill 中的默认 connector 和恢复契约。
+- `skills/sandrone/SKILL.md`: skill 中的默认 connector 和恢复契约。
 - `docs/proposals/2026-05-31/resumable-blocked-requests-and-codex-bin-resolution/`: 本次变更记录。
 
 ## 风险与兼容

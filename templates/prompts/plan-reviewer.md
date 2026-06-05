@@ -6,11 +6,14 @@
 
 如果文件存在但无法读取，或者关键输入缺失到无法可靠评审，返回 `gate_unavailable: true`，不要猜测。
 
-- `$CODEX_AUTO_DEV_ISSUE`
-- `$CODEX_AUTO_DEV_PLAN`
-- `$CODEX_AUTO_DEV_TARGET_REPO`
-- `$CODEX_AUTO_DEV_CHANGE_PATH`
-- `docs/codegraph/context.md`，如果存在
+- `$SANDRONE_ISSUE`
+- `$SANDRONE_PLAN`
+- `$SANDRONE_DECOMPOSITION` 和 `$SANDRONE_DAG`，如果这些文件存在或当前 request 是 slice
+- `$SANDRONE_CODEGRAPH_CONTEXT`
+- `$SANDRONE_OBSIDIAN_NOTE`
+- `$SANDRONE_TARGET_REPO`
+- `$SANDRONE_CHANGE_PATH`
+- `obsidian/codegraph/context.md`，如果存在
 - `dev/repo/.codegraph` 是 CodeGraph MCP 索引目录；如果索引缺失但关键判断依赖仓库结构，必须在 process 或 finding 中说明风险
 - 目标项目 README、CONTRIBUTING、AGENTS、脚本和检查配置
 
@@ -18,15 +21,19 @@
 
 1. 读取需求标题和完整需求描述，确认计划没有只根据标题推断。
 2. 读取目标仓库结构、项目文档、已有约定和 CodeGraph 文档。
-3. 检查计划目标之间的依赖顺序，确认先后关系、完成信号和风险处理清楚。
-4. 检查每个计划改动是否指向合理的文件、模块、命令、测试和验证证据。
-5. 检查计划是否明确尊重目标项目内部要求和 codex-auto-dev 审批门禁。
+3. 读取 Obsidian note，确认计划没有丢失相关父 request/slice、历史决策或风险导航。
+4. 如果当前 request 是 slice，确认 plan 与父 request 的 `decomposition.md`/`dag.json` 和需求覆盖说明一致，并且没有扩大当前 slice 边界。
+5. 检查计划目标之间的依赖顺序，确认先后关系、完成信号和风险处理清楚。
+6. 检查每个计划改动是否指向合理的文件、模块、命令、测试和验证证据。
+7. 检查计划是否明确尊重目标项目内部要求和 Sandrone 审批门禁。
 
 ## 必须检查
 
 - 计划是否同时覆盖 issue 标题和描述，不能只基于标题。
 - 计划是否保留规范化需求记录，包括 request ID、external ID、source、URL、需求名称和需求描述。
-- 计划是否明确说明 plan approval 通过前不得 start，change-doc approval 通过前不得 finish。
+- Slice plan 必须引用父 request 的 approved decomposition，并说明本 plan 覆盖哪个 slice 边界；不得扩大 slice 范围。
+- 计划是否维护 Obsidian 导航，只用链接关系连接 plan、父 request、slice、review 和 PR，不把长文档复制到 Obsidian。
+- 计划是否明确说明 plan gate 通过前不得 start，change-doc gate 通过前不得 finish。
 - 除非需求明确要求或现实上无法避免，计划不得破坏已有功能。
 - 如果计划包含破坏性变更，必须说明来源、影响、迁移、兼容策略和测试。
 - 计划是否基于现有代码和项目文档，而不是凭空设计。
@@ -91,7 +98,7 @@ Finding 格式:
   "critical": [],
   "high": [],
   "warning": [{"title": "回滚步骤可以更具体", "evidence": "plan.md 的风险段落只有总体说明", "impact": "非阻塞，但实现阶段遇到失败时恢复成本会更高", "required_fix": "实现前建议补充具体回滚命令", "suggested_change": "在风险与恢复章节列出回滚命令和需要保留的状态文件。", "verification": "重新阅读 plan.md 的风险与恢复章节，确认包含命令和恢复入口。"}],
-  "info": [{"title": "CodeGraph 已参考", "evidence": "plan.md 仓库分析引用 docs/codegraph/context.md", "impact": "非阻塞，说明计划已经使用架构上下文", "required_fix": "不需要修复", "suggested_change": "后续实现继续引用相关模块即可。", "verification": "无需额外验证。"}]
+  "info": [{"title": "CodeGraph 已参考", "evidence": "plan.md 仓库分析引用 obsidian/codegraph/context.md", "impact": "非阻塞，说明计划已经使用架构上下文", "required_fix": "不需要修复", "suggested_change": "后续实现继续引用相关模块即可。", "verification": "无需额外验证。"}]
 }
 ```
 
@@ -124,7 +131,7 @@ Finding 格式:
   "recommended_next_phase": "blocked",
   "summary": "关键输入不可读，无法可靠评审计划。",
   "process": ["尝试读取 request.md", "尝试读取 plan.md"],
-  "critical": [{"title": "plan.md 不可读取", "evidence": "$CODEX_AUTO_DEV_PLAN 指向的文件不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或重新运行 codex-auto-dev plan 后再评审", "suggested_change": "确认 docs/changes/<name>/plan.md 存在且可读；缺失时重新运行 codex-auto-dev plan。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 plan.md。"}],
+  "critical": [{"title": "plan.md 不可读取", "evidence": "$SANDRONE_PLAN 指向的文件不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或重新运行 sandrone plan 后再评审", "suggested_change": "确认 obsidian/changes/<change-name>/plan.md 存在且可读；缺失时重新运行 sandrone plan。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 plan.md。"}],
   "high": [],
   "warning": [],
   "info": []

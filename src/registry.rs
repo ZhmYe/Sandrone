@@ -1,7 +1,7 @@
 use super::*;
 
-fn codex_auto_dev_home() -> PathBuf {
-    if let Ok(value) = env::var("CODEX_AUTO_DEV_HOME")
+fn sandrone_home() -> PathBuf {
+    if let Ok(value) = env::var("SANDRONE_HOME")
         && !value.trim().is_empty()
     {
         return PathBuf::from(value);
@@ -9,13 +9,68 @@ fn codex_auto_dev_home() -> PathBuf {
     if let Ok(value) = env::var("HOME")
         && !value.trim().is_empty()
     {
-        return PathBuf::from(value).join(".codex-auto-dev");
+        return PathBuf::from(value).join(".sandrone");
+    }
+    PathBuf::from(".sandrone-global")
+}
+
+pub(crate) fn global_workspaces_path() -> PathBuf {
+    sandrone_home().join(GLOBAL_WORKSPACES_FILE)
+}
+
+fn legacy_sandrone_home() -> PathBuf {
+    if let Ok(value) = env::var("SANDRONE_LEGACY_HOME")
+        && !value.trim().is_empty()
+    {
+        return PathBuf::from(value);
+    }
+    if let Ok(value) = env::var("SANDRONE_HOME")
+        && !value.trim().is_empty()
+    {
+        let path = PathBuf::from(value);
+        if path.file_name().is_some_and(|name| name == LOCAL_STATE_DIR) {
+            return path.with_file_name(LEGACY_LOCAL_STATE_DIR);
+        }
+    }
+    if let Ok(value) = env::var("HOME")
+        && !value.trim().is_empty()
+    {
+        return PathBuf::from(value).join(LEGACY_LOCAL_STATE_DIR);
     }
     PathBuf::from(".codex-auto-dev-global")
 }
 
-pub(crate) fn global_workspaces_path() -> PathBuf {
-    codex_auto_dev_home().join(GLOBAL_WORKSPACES_FILE)
+fn legacy_global_workspaces_path() -> PathBuf {
+    legacy_sandrone_home().join(GLOBAL_WORKSPACES_FILE)
+}
+
+pub(crate) fn migrate_legacy_current_workspace_state_if_needed() -> Result<()> {
+    migrate_legacy_workspace_state(Path::new("."))
+}
+
+fn migrate_legacy_workspace_state(workspace_path: &Path) -> Result<()> {
+    let current_state = workspace_path.join(LOCAL_STATE_DIR);
+    let legacy_state = workspace_path.join(LEGACY_LOCAL_STATE_DIR);
+    if current_state.exists() || !legacy_state.exists() {
+        return Ok(());
+    }
+    copy_dir_all(&legacy_state, &current_state)
+}
+
+fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_all(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn refresh_current_workspace_registry_or_warn(last_status: &str) {
@@ -73,6 +128,22 @@ fn request_status_counts(requests: &[Request]) -> BTreeMap<String, usize> {
 
 fn load_workspace_records() -> Result<Vec<WorkspaceRecord>> {
     let path = global_workspaces_path();
+    let mut records = load_workspace_records_from_path(&path)?;
+    let legacy_path = legacy_global_workspaces_path();
+    if legacy_path != path {
+        for legacy_record in load_workspace_records_from_path(&legacy_path)? {
+            if !records.iter().any(|record| {
+                record.key == legacy_record.key
+                    || record.workspace_path == legacy_record.workspace_path
+            }) {
+                records.push(legacy_record);
+            }
+        }
+    }
+    Ok(records)
+}
+
+fn load_workspace_records_from_path(path: &Path) -> Result<Vec<WorkspaceRecord>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -142,6 +213,15 @@ pub(crate) fn refresh_registered_workspaces() -> Result<Vec<WorkspaceRecord>> {
 
 fn refresh_workspace_record(record: &WorkspaceRecord) -> WorkspaceRecord {
     let workspace_path = Path::new(&record.workspace_path);
+    if let Err(error) = migrate_legacy_workspace_state(workspace_path) {
+        let mut failed = record.clone();
+        failed.last_status = format!(
+            "error: legacy migration failed: {}",
+            review_diagnostic_excerpt(&error.to_string())
+        );
+        failed.updated_at = now_string();
+        return failed;
+    }
     if !workspace_path.join(CONFIG_PATH).exists() {
         let mut missing = record.clone();
         missing.last_status = "missing".to_string();

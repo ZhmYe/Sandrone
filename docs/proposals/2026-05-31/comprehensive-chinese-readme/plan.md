@@ -25,13 +25,13 @@
 - 风险: README 过长导致第一次阅读成本上升。
   控制: 采用清晰章节、表格和代码块，先给项目作用和快速开始，再给深入契约。
 - 风险: 文档描述与 CLI 行为不一致。
-  控制: 对照 `codex-auto-dev --help` 和源码中的 `list`、`status`、`validate` 实现后再写命令表。
+  控制: 对照 `sandrone --help` 和源码中的 `list`、`status`、`validate` 实现后再写命令表。
 - 风险: Mermaid 语法在 GitHub 渲染失败。
   控制: 使用简单 `flowchart TD` 和 `stateDiagram-v2`，避免复杂样式。
 
 ## 验证
 
-- `codex-auto-dev --help`
+- `sandrone --help`
 - `cargo test help_lists_state_and_validation_commands`
 - `git diff --check`
 - `python3 scripts/validate_proposals.py`

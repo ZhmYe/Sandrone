@@ -2,11 +2,11 @@
 
 ## 背景
 
-自动流程中的 `tools/issue-agent.sh` 和 reviewer connector 会启动 `codex exec`。当 `codex-auto-dev tick` 从普通终端、heartbeat、cron、LaunchAgent 或 GUI 调度器启动时，运行环境不一定包含 Codex App 的 CLI 路径，导致 agent 可能因为找不到 `codex` 而 block。
+自动流程中的 `tools/issue-agent.sh` 和 reviewer connector 会启动 `codex exec`。当 `sandrone tick` 从普通终端、heartbeat、cron、LaunchAgent 或 GUI 调度器启动时，运行环境不一定包含 Codex App 的 CLI 路径，导致 agent 可能因为找不到 `codex` 而 block。
 
 ## 目标
 
-- 在 README 中明确 Codex CLI 的解析顺序: `CODEX_AUTO_DEV_CODEX_BIN`、PATH 中的 `codex`、`CODEX_AUTO_DEV_CODEX_APP`。
+- 在 README 中明确 Codex CLI 的解析顺序: `SANDRONE_CODEX_BIN`、PATH 中的 `codex`、`SANDRONE_CODEX_APP`。
 - 给出推荐的 `~/.zshrc` 配置块，避免用户写死只能在单机生效的二进制路径。
 - 说明 `~/.zprofile`、bash 配置文件、GUI/LaunchAgent 和 `launchctl setenv` 的适用场景。
 - 说明代理变量可以在启动 `tick` 的同一 shell 中配置，并会被子 Codex agent 继承。

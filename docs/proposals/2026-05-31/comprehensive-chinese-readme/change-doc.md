@@ -4,7 +4,7 @@
 
 本次将 README 从阶段性说明重写为完整中文用户手册，覆盖项目作用、整体流程、可视化图、命令、使用方式、注意事项、配置、环境、恢复和框架治理。
 
-同时补齐 `codex-auto-dev --help`，让已实现的 `list`、`status [REQ-0001]` 和 `validate` 与 README 命令表保持一致。
+同时补齐 `sandrone --help`，让已实现的 `list`、`status [REQ-0001]` 和 `validate` 与 README 命令表保持一致。
 
 ## 实现前后对比
 
@@ -42,7 +42,7 @@ README 明确记录 Codex CLI 解析顺序、`~/.zshrc` 配置、GUI/LaunchAgent
 
 ## 验证证据
 
-- [x] `codex-auto-dev --help`
+- [x] `sandrone --help`
 - [x] `cargo test help_lists_state_and_validation_commands`
 - [x] `git diff --check`
 - [x] `python3 scripts/validate_proposals.py`

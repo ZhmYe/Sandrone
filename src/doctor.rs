@@ -8,7 +8,7 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
             "Workspace",
             Path::new(CONFIG_PATH).exists() && Path::new(STATE_PATH).exists(),
             "workspace metadata exists",
-            "run codex-auto-dev new first",
+            "run sandrone new first",
             true,
         ),
         doctor_command_check("Git", "git", &["--version"], false),
@@ -32,10 +32,26 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
         doctor_check(
             "Reviewer tools",
             Path::new(PLAN_REVIEW_TOOL).exists()
+                && Path::new(DECOMPOSITION_REVIEW_TOOL).exists()
                 && Path::new(TEST_REVIEW_TOOL).exists()
-                && Path::new(DESIGN_REVIEW_TOOL).exists(),
-            "plan/test/design reviewer connectors exist",
+                && Path::new(DESIGN_REVIEW_TOOL).exists()
+                && Path::new(INTEGRATION_REVIEW_TOOL).exists(),
+            "decomposition/plan/test/design/integration reviewer connectors exist",
             "missing one or more reviewer connectors",
+            false,
+        ),
+        doctor_check(
+            "Format check",
+            Path::new(CHECK_FORMAT_TOOL).exists(),
+            "check-format connector exists",
+            "missing tools/check-format.sh; run sandrone upgrade",
+            false,
+        ),
+        doctor_check(
+            "Obsidian vault",
+            Path::new(".obsidian").is_dir() && Path::new("obsidian/changes").is_dir(),
+            "workspace Obsidian vault directories exist",
+            "missing .obsidian or obsidian/changes; run sandrone upgrade",
             false,
         ),
         doctor_check(
@@ -56,12 +72,19 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
             "CodeGraph index",
             !repo_has_commits(DEV_REPO) || codegraph_index_ready(DEV_REPO),
             "target repo is empty or dev/repo/.codegraph exists",
-            "target repo has commits but dev/repo/.codegraph is missing; run codex-auto-dev plan or codegraph init -i dev/repo",
+            "target repo has commits but dev/repo/.codegraph is missing; run sandrone plan or codegraph init -i dev/repo",
+            true,
+        ),
+        doctor_check(
+            "CodeGraph context",
+            !repo_has_commits(DEV_REPO) || Path::new("obsidian/codegraph/context.md").exists(),
+            "target repo is empty or obsidian/codegraph/context.md exists",
+            "target repo has commits but obsidian/codegraph/context.md is missing; run sandrone plan or codegraph context -p dev/repo <task>",
             true,
         ),
     ];
 
-    println!("Codex Auto Dev Doctor Report");
+    println!("Sandrone Doctor Report");
     println!();
     for check in &checks {
         println!(

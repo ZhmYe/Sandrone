@@ -30,7 +30,7 @@ reviewer rejected 会让状态停在 `plan-review-rejected` 或 `code-review-rej
 
 ### Agent Prompt 拆分
 
-默认 connector 仍是 `tools/issue-agent.sh`，但通过 `CODEX_AUTO_DEV_AGENT_PHASE` 选择:
+默认 connector 仍是 `tools/issue-agent.sh`，但通过 `SANDRONE_AGENT_PHASE` 选择:
 
 - `tools/prompts/plan-agent.md`: 只写 `plan.md`，不得运行 submit/review/start。
 - `tools/prompts/implementation-agent.md`: 只在 worktree 中实现并写 `change-doc.md`，不得运行 submit/review/finish。

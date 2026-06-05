@@ -1,4 +1,4 @@
-# 计划: {{title}}
+# 计划: {{request_id}} {{title}}
 
 ## 规范化需求记录
 
@@ -6,22 +6,37 @@
 - External ID: `{{external_id}}`
 - Source: `{{source}}`
 - URL: {{url}}
+- 需求来源: {{request_link}}
 
 ### 需求名称
 
 {{title}}
 
-### 需求描述
+### 需求描述索引
 
+当前需求正文如下；如果这是 slice，本文件同时是 slice request 与 plan，父需求全文请通过 decomposition 导航读取。
+
+```text
 {{body}}
+```
+
+planning agent 必须阅读标题、当前需求正文、父级拆解（如有）和完整外部需求后再填写本计划，不得把标题当作全部需求。
 
 ## 模板说明
 
-这是计划模板。Codex 或 planning agent 必须填写真实计划；`codex-auto-dev` 只创建必要文档包，不生成实际开发计划。agent 可以重写本文件，但必须保留并更新上面的规范化需求记录。
+这是空白计划模板。`sandrone` 只创建文档包和导航，不生成真实开发计划。planning agent 可以重写正文，但必须保留并更新上面的规范化需求记录。
+
+## 图谱导航
+
+- 需求记录: {{request_link}}
+- 需求拆解: {{decomposition_link}}
+- Agent 日志: {{agent_journal_link}}
+- 实现文档: {{change_doc_link}}
+- CodeGraph 上下文: `obsidian/codegraph/context.md`
 
 ## 需求理解
 
-读取 `request.md` 的需求标题和需求描述，补齐原始需求中的缺失上下文。标题和描述都必须作为需求来源，标题不能替代完整需求描述。
+待填写。说明标题、完整描述、用户约束、非目标和验收边界。
 
 ## 计划前检查
 
@@ -29,34 +44,32 @@
 
 ## 目标与依赖顺序
 
-列出要完成的目标、目标之间的依赖关系、必须先完成的前置条件，以及每个目标的完成信号。
+待填写。列出目标、先后关系、依赖理由和完成信号。
 
 ## 仓库分析
 
-列出已经阅读的文件、模块、现有模式、目标项目文档和 CodeGraph 文档。说明本次改动为什么应该落在这些位置。
+待填写。列出已阅读的文件、模块、现有模式、目标项目文档和 CodeGraph 证据。
+
+## Obsidian 导航
+
+待填写。列出父 request、slice、已完成依赖 slice、相关决策、review 或 PR 链接。这里只写关系，不复制长文档。
 
 ## 目标项目内部要求
 
-列出目标项目自己的 change doc、pre-commit、文档检查、format/lint/test 命令、AI review、安全规则、敏感信息规则和禁止 panic/硬编码等要求。
+待填写。列出目标项目自己的 change doc、pre-commit、文档检查、format/lint/test、AI review、安全规则、敏感信息规则和禁止 panic/硬编码等要求。
 
 ## 实现计划
 
-列出预计修改或新增的文件、模块、函数、结构体、命令、配置和迁移方式。说明是否包含破坏性改动，如何兼容旧数据。
+待填写。列出预计修改或新增的文件、模块、函数、结构体、命令、配置和迁移方式。说明是否包含破坏性改动，如何兼容旧数据。
 
 ## 测试与验证
 
-列出单元测试、集成测试、失败路径测试、回归测试、安全检查、pre-commit、文档检查、AI review 和人工验证步骤。每条验证都要说明命令或证据。
+待填写。列出单元测试、集成测试、失败路径测试、回归测试、安全检查、pre-commit、文档检查、AI review 和人工验证步骤。每条验证都要说明命令或证据。
 
-## 执行任务清单
+## 风险、迁移与回滚
 
-- [ ] 阅读 `request.md` 和目标项目文档。
-- [ ] 填写本计划，覆盖目标、依赖、实现位置、测试策略和风险。
-- [ ] 等待 wrapper hook 调用外层 `codex-auto-dev advance` 提交 plan gate 并运行 PlanReviewer。
-- [ ] PlanReviewer 拒绝时，读取 `reviews/plan-review/summary.json` 和最新 detail，修复计划后再次交给外层 advance/tick。
-- [ ] 计划审批通过后，外层 advance/tick 会创建独立 worktree 并派发 implementation agent。
-- [ ] implementation 只能在生成的 worktree 中实现，不直接编辑 `dev/repo`。
-- [ ] 填写 `change-doc.md` 后等待 wrapper hook 调用外层 advance 提交 change-doc gate 并运行 TestReviewer 和 DesignReviewer。
+待填写。说明兼容性、迁移策略、回滚步骤、数据风险、外部依赖和人工事项。
 
 ## 审批门禁
 
-plan approval 通过前不得 start。change-doc approval 通过前不得 finish、commit、push、创建 PR 或 merge。
+plan gate 通过前不得 start。change-doc gate 通过前不得 finish、commit、push、创建 PR 或 merge。

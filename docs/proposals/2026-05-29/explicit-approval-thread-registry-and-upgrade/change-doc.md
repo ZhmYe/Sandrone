@@ -21,7 +21,7 @@ Approval 存在于 `docs/changes/<name>/approvals/<gate>.approval.json`。`submi
 
 ### Session Registry
 
-`.codex-auto-dev/sessions.json` 记录 request、phase、status、thread_id、thread_url、workspace、target_repo、worktree 和 change_path。CLI 不负责创建 Codex App thread，但它负责提供可见登记点，后续机器人创建 thread 后可以写回 URL，前端也可以读取展示。
+`.sandrone/sessions.json` 记录 request、phase、status、thread_id、thread_url、workspace、target_repo、worktree 和 change_path。CLI 不负责创建 Codex App thread，但它负责提供可见登记点，后续机器人创建 thread 后可以写回 URL，前端也可以读取展示。
 
 ### Upgrade 旧 Workspace
 

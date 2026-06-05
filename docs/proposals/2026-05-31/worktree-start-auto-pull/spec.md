@@ -2,7 +2,7 @@
 
 ## 背景
 
-`codex-auto-dev plan` 会在创建计划前检测远端是否领先，但 plan 创建完成后到 implementation worktree 创建之间，目标仓库仍可能有新提交。如果 `start` 只 `fetch` 不 `pull`，新 worktree 可能基于过期的本地分支创建，导致实现、review 和后续 PR 都落在旧基线上。
+`sandrone plan` 会在创建计划前检测远端是否领先，但 plan 创建完成后到 implementation worktree 创建之间，目标仓库仍可能有新提交。如果 `start` 只 `fetch` 不 `pull`，新 worktree 可能基于过期的本地分支创建，导致实现、review 和后续 PR 都落在旧基线上。
 
 ## 目标
 

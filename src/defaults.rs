@@ -1,12 +1,18 @@
 use super::*;
 
+const WORKSPACE_ENV_FILE: &str = ".env";
+const WORKSPACE_ENV_EXAMPLE: &str = ".env.example";
+
 pub(crate) fn prepare_workspace_dirs() -> Result<()> {
-    fs::create_dir_all(".codex-auto-dev/state")?;
+    fs::create_dir_all(".sandrone/state")?;
+    ensure_obsidian_vault_dirs()?;
     fs::create_dir_all("dev")?;
     fs::create_dir_all(WORKTREES)?;
-    fs::create_dir_all("docs/changes")?;
+    fs::create_dir_all("docs/guides")?;
+    fs::create_dir_all("docs/playbooks")?;
+    fs::create_dir_all("docs/reference")?;
     fs::create_dir_all("tools")?;
-    fs::create_dir_all("skills/codex-auto-dev-workflow")?;
+    fs::create_dir_all("skills/sandrone")?;
     Ok(())
 }
 
@@ -53,26 +59,116 @@ pub(crate) fn ensure_sessions_file() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn write_default_env_files() -> Result<()> {
+    if !Path::new(WORKSPACE_ENV_EXAMPLE).exists() {
+        fs::write(WORKSPACE_ENV_EXAMPLE, default_workspace_env_example())?;
+    }
+    if !Path::new(WORKSPACE_ENV_FILE).exists() {
+        fs::copy(WORKSPACE_ENV_EXAMPLE, WORKSPACE_ENV_FILE)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn generate_plan_packet(request: &Request, preflight: &PlanPreflight) -> Result<()> {
     fs::create_dir_all(&request.change_path)?;
-    fs::create_dir_all(Path::new(&request.change_path).join("approvals"))?;
-    fs::write(
-        Path::new(&request.change_path).join("request.md"),
-        render_request(request),
-    )?;
-    fs::write(
-        Path::new(&request.change_path).join("plan.md"),
-        render_plan_template(request, preflight),
-    )?;
-    fs::write(
-        Path::new(&request.change_path).join("change-doc.md"),
-        render_change_doc_template(request),
-    )?;
-    fs::write(
-        Path::new(&request.change_path).join("agent-journal.md"),
-        render_agent_journal_template(request),
-    )?;
+    write_plan_packet_artifacts(request, preflight, true)?;
     write_status_json(request, "planning", "planning", "")?;
+    Ok(())
+}
+
+pub(crate) fn generate_decomposition_packet(
+    request: &Request,
+    preflight: &PlanPreflight,
+) -> Result<()> {
+    fs::create_dir_all(&request.change_path)?;
+    write_parent_decomposition_packet_artifacts(request, preflight, true)?;
+    write_decomposition_artifacts(request, true)?;
+    Ok(())
+}
+
+pub(crate) fn ensure_decomposition_artifacts(request: &Request) -> Result<()> {
+    fs::create_dir_all(&request.change_path)?;
+    let preflight = PlanPreflight { notes: Vec::new() };
+    write_parent_decomposition_packet_artifacts(request, &preflight, false)?;
+    write_decomposition_artifacts(request, false)
+}
+
+fn write_plan_packet_artifacts(
+    request: &Request,
+    preflight: &PlanPreflight,
+    overwrite: bool,
+) -> Result<()> {
+    let artifacts = [
+        ("request.md", render_request(request)),
+        ("plan.md", render_plan_template(request, preflight)),
+        ("change-doc.md", render_change_doc_template(request)),
+        ("pr-doc.md", render_pr_doc_template(request)),
+        ("agent-journal.md", render_agent_journal_template(request)),
+    ];
+    for (name, content) in artifacts {
+        if is_slice_request(request) && !request_generates_markdown_artifact(request, name) {
+            continue;
+        }
+        let path = request_artifact_path_buf(request, name);
+        if overwrite || !path.exists() {
+            fs::write(path, content)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_parent_decomposition_packet_artifacts(
+    request: &Request,
+    preflight: &PlanPreflight,
+    overwrite: bool,
+) -> Result<()> {
+    let artifacts = [
+        ("request.md", render_request(request)),
+        ("plan.md", render_plan_template(request, preflight)),
+        ("change-doc.md", render_change_doc_template(request)),
+        ("pr-doc.md", render_pr_doc_template(request)),
+        ("agent-journal.md", render_agent_journal_template(request)),
+    ];
+    write_runtime_markdown_artifacts(request, &artifacts, overwrite)
+}
+
+fn write_runtime_markdown_artifacts(
+    request: &Request,
+    artifacts: &[(&str, String)],
+    overwrite: bool,
+) -> Result<()> {
+    for (name, content) in artifacts {
+        if !request_generates_markdown_artifact(request, name) {
+            continue;
+        }
+        let path = request_artifact_path_buf(request, name);
+        if overwrite || !path.exists() {
+            fs::write(path, content)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_decomposition_artifacts(request: &Request, overwrite: bool) -> Result<()> {
+    let artifacts = [
+        ("decomposition.md", render_decomposition_template(request)),
+        (
+            "decomposition.json",
+            render_decomposition_json_template(request),
+        ),
+        ("dag.json", render_dag_json_template(request)),
+    ];
+    for (name, content) in artifacts {
+        let path = request_artifact_path_buf(request, name);
+        if overwrite || !path.exists() {
+            fs::write(path, content)?;
+        }
+    }
+    fs::write(
+        Path::new(&request.change_path).join(".decomposition-kind"),
+        "request-slices\n",
+    )?;
+    sync_obsidian_request_note(request)?;
     Ok(())
 }
 
@@ -83,59 +179,67 @@ pub(crate) fn generate_start_packet(request: &Request) -> Result<()> {
 }
 
 pub(crate) fn render_request(request: &Request) -> String {
-    render_template(
-        assets::REQUEST_TEMPLATE,
-        &[
-            ("title", request.title.clone()),
-            ("request_id", request.request_id.clone()),
-            ("external_id", request.external_id.clone()),
-            ("source", request.source.clone()),
-            ("url", fallback_empty(&request.url, "n/a").to_string()),
-            (
-                "body",
-                fallback_empty(
-                    &request.body,
-                    "Codex 必须从用户对话或外部需求来源补充完整需求。",
-                )
-                .to_string(),
-            ),
-        ],
-    )
+    render_template(assets::REQUEST_TEMPLATE, &request_template_values(request))
 }
 
 pub(crate) fn render_plan_template(request: &Request, preflight: &PlanPreflight) -> String {
-    render_template(
-        assets::PLAN_TEMPLATE,
-        &[
-            ("title", request.title.clone()),
-            ("request_id", request.request_id.clone()),
-            ("external_id", request.external_id.clone()),
-            ("source", request.source.clone()),
-            ("url", fallback_empty(&request.url, "n/a").to_string()),
-            (
-                "body",
-                fallback_empty(
-                    &request.body,
-                    "Codex 必须从用户对话或外部需求来源补充完整需求。",
-                )
-                .to_string(),
-            ),
-            ("preflight_notes", render_preflight_notes(preflight)),
-        ],
-    )
+    let mut values = request_template_values(request);
+    values.push(("preflight_notes", render_preflight_notes(preflight)));
+    render_template(assets::PLAN_TEMPLATE, &values)
 }
 
 pub(crate) fn render_change_doc_template(request: &Request) -> String {
     render_template(
         assets::CHANGE_DOC_TEMPLATE,
-        &[("request_id", request.request_id.clone())],
+        &request_template_values(request),
     )
+}
+
+pub(crate) fn render_pr_doc_template(request: &Request) -> String {
+    let mut values = request_template_values(request);
+    values.extend([
+        (
+            "pr_title",
+            format!("{} {} PR", request.request_id, request.title),
+        ),
+        (
+            "branch",
+            fallback_empty(&request.branch, "not-started").to_string(),
+        ),
+        ("status", request.status.clone()),
+        ("delivered_at", now_string()),
+        ("pr_tool_output", "pending".to_string()),
+        ("pr_url", "n/a".to_string()),
+        ("pr_status_raw", "n/a".to_string()),
+        ("pr_status", "not-started".to_string()),
+        ("change_doc_approved", "pending".to_string()),
+        ("integration_review_status", "pending".to_string()),
+    ]);
+    render_template(assets::PR_DOC_TEMPLATE, &values)
+}
+
+pub(crate) fn render_decomposition_template(request: &Request) -> String {
+    render_template(
+        assets::DECOMPOSITION_TEMPLATE,
+        &request_template_values(request),
+    )
+}
+
+pub(crate) fn render_decomposition_json_template(request: &Request) -> String {
+    render_template(
+        assets::DECOMPOSITION_JSON_TEMPLATE,
+        &request_template_values(request),
+    )
+}
+
+pub(crate) fn render_dag_json_template(request: &Request) -> String {
+    render_template(assets::DAG_JSON_TEMPLATE, &request_template_values(request))
 }
 
 pub(crate) fn render_agent_journal_template(request: &Request) -> String {
     render_template(
         assets::AGENT_JOURNAL_TEMPLATE,
-        &[("request_id", request.request_id.clone())],
+        &request_template_values(request),
     )
 }
 
@@ -145,6 +249,106 @@ fn render_template(template: &str, values: &[(&str, String)]) -> String {
         rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
     }
     rendered
+}
+
+fn request_template_values(request: &Request) -> Vec<(&'static str, String)> {
+    let request_link_artifact = if is_slice_request(request) {
+        "plan.md"
+    } else {
+        "request.md"
+    };
+    let decomposition_link = if is_slice_request(request) {
+        parent_artifact_wikilink_for_slice(request, "decomposition.md", "decomposition.md")
+            .unwrap_or_else(|| "父需求 decomposition.md".to_string())
+    } else {
+        request_artifact_markdown_link(request, "decomposition.md", "decomposition.md")
+    };
+    let decomposition_wikilink = if is_slice_request(request) {
+        parent_artifact_wikilink_for_slice(request, "decomposition.md", "decomposition.md")
+            .unwrap_or_else(|| "父需求 decomposition.md".to_string())
+    } else {
+        request_artifact_wikilink(request, "decomposition.md", "decomposition.md")
+    };
+    vec![
+        ("title", request.title.clone()),
+        ("request_id", request.request_id.clone()),
+        ("request_id_lower", request.request_id.to_lowercase()),
+        ("external_id", request.external_id.clone()),
+        ("source", request.source.clone()),
+        ("url", fallback_empty(&request.url, "n/a").to_string()),
+        (
+            "body",
+            fallback_empty(
+                &request.body,
+                "Codex 必须从用户对话或外部需求来源补充完整需求。",
+            )
+            .to_string(),
+        ),
+        ("updated_at", now_string()),
+        (
+            "request_file",
+            request_artifact_file_name(request, "request.md"),
+        ),
+        (
+            "decomposition_file",
+            request_artifact_file_name(request, "decomposition.md"),
+        ),
+        ("plan_file", request_artifact_file_name(request, "plan.md")),
+        (
+            "change_doc_file",
+            request_artifact_file_name(request, "change-doc.md"),
+        ),
+        (
+            "agent_journal_file",
+            request_artifact_file_name(request, "agent-journal.md"),
+        ),
+        (
+            "pr_doc_file",
+            request_artifact_file_name(request, "pr-doc.md"),
+        ),
+        (
+            "request_link",
+            request_artifact_markdown_link(request, request_link_artifact, "request.md"),
+        ),
+        ("decomposition_link", decomposition_link),
+        (
+            "plan_link",
+            request_artifact_markdown_link(request, "plan.md", "plan.md"),
+        ),
+        (
+            "change_doc_link",
+            request_artifact_markdown_link(request, "change-doc.md", "change-doc.md"),
+        ),
+        (
+            "agent_journal_link",
+            request_artifact_markdown_link(request, "agent-journal.md", "agent-journal.md"),
+        ),
+        (
+            "pr_doc_link",
+            request_artifact_markdown_link(request, "pr-doc.md", "pr-doc.md"),
+        ),
+        (
+            "request_wikilink",
+            request_artifact_wikilink(request, request_link_artifact, "request.md"),
+        ),
+        ("decomposition_wikilink", decomposition_wikilink),
+        (
+            "plan_wikilink",
+            request_artifact_wikilink(request, "plan.md", "plan.md"),
+        ),
+        (
+            "change_doc_wikilink",
+            request_artifact_wikilink(request, "change-doc.md", "change-doc.md"),
+        ),
+        (
+            "agent_journal_wikilink",
+            request_artifact_wikilink(request, "agent-journal.md", "agent-journal.md"),
+        ),
+        (
+            "pr_doc_wikilink",
+            request_artifact_wikilink(request, "pr-doc.md", "pr-doc.md"),
+        ),
+    ]
 }
 
 fn write_executable_file(path: &str, content: impl AsRef<[u8]>) -> Result<()> {
@@ -176,6 +380,12 @@ pub(crate) fn write_default_issue_agent_tool() -> Result<()> {
     }
     if !Path::new(ISSUE_AGENT_PROMPT).exists() {
         fs::write(ISSUE_AGENT_PROMPT, default_issue_agent_prompt())?;
+    }
+    if !Path::new(DECOMPOSITION_AGENT_PROMPT).exists() {
+        fs::write(
+            DECOMPOSITION_AGENT_PROMPT,
+            default_decomposition_agent_prompt(),
+        )?;
     }
     if !Path::new(PLAN_AGENT_PROMPT).exists() {
         fs::write(PLAN_AGENT_PROMPT, default_plan_agent_prompt())?;
@@ -229,11 +439,17 @@ fn default_pr_status_tool_content() -> &'static str {
 pub(crate) fn write_default_review_tools() -> Result<()> {
     fs::create_dir_all("tools/prompts")?;
     fs::create_dir_all("tools/schemas")?;
+    write_default_check_format_tool()?;
     write_default_plan_review_tool()?;
+    write_default_decomposition_review_tool()?;
     write_default_test_review_tool()?;
     write_default_design_review_tool()?;
     write_default_integration_review_tool()?;
     write_default_review_prompt(PLAN_REVIEW_PROMPT, default_plan_review_prompt())?;
+    write_default_review_prompt(
+        DECOMPOSITION_REVIEW_PROMPT,
+        default_decomposition_review_prompt(),
+    )?;
     write_default_review_prompt(TEST_REVIEW_PROMPT, default_test_review_prompt())?;
     write_default_review_prompt(DESIGN_REVIEW_PROMPT, default_design_review_prompt())?;
     write_default_review_prompt(
@@ -244,11 +460,31 @@ pub(crate) fn write_default_review_tools() -> Result<()> {
     Ok(())
 }
 
+fn write_default_check_format_tool() -> Result<()> {
+    if Path::new(CHECK_FORMAT_TOOL).exists() {
+        return Ok(());
+    }
+    write_executable_file(CHECK_FORMAT_TOOL, default_check_format_tool_content())
+}
+
+fn default_check_format_tool_content() -> &'static str {
+    assets::CHECK_FORMAT_SCRIPT
+}
+
 fn write_default_plan_review_tool() -> Result<()> {
     write_default_review_tool(
         PLAN_REVIEW_TOOL,
         "PlanReviewer",
         PLAN_REVIEW_PROMPT,
+        "workspace-write",
+    )
+}
+
+fn write_default_decomposition_review_tool() -> Result<()> {
+    write_default_review_tool(
+        DECOMPOSITION_REVIEW_TOOL,
+        "DecompositionReviewer",
+        DECOMPOSITION_REVIEW_PROMPT,
         "workspace-write",
     )
 }
@@ -337,10 +573,34 @@ struct ReferenceExample {
 }
 
 pub(crate) fn default_reference_example_paths() -> Vec<&'static str> {
-    default_managed_assets()
+    let mut paths = default_managed_assets()
         .into_iter()
         .map(|asset| asset.example_path)
-        .collect()
+        .collect::<Vec<_>>();
+    paths.push(WORKSPACE_ENV_EXAMPLE);
+    paths
+}
+
+fn default_reference_examples() -> Vec<ReferenceExample> {
+    let mut examples = vec![ReferenceExample {
+        path: WORKSPACE_ENV_EXAMPLE,
+        content: default_workspace_env_example().to_string(),
+        executable: false,
+    }];
+    examples.extend(
+        default_managed_assets()
+            .into_iter()
+            .map(|asset| ReferenceExample {
+                path: asset.example_path,
+                content: asset.content,
+                executable: asset.executable,
+            }),
+    );
+    examples
+}
+
+fn default_workspace_env_example() -> &'static str {
+    assets::WORKSPACE_ENV_EXAMPLE
 }
 
 pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
@@ -376,11 +636,27 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: true,
         },
         DefaultManagedAsset {
+            path: CHECK_FORMAT_TOOL,
+            example_path: CHECK_FORMAT_TOOL_EXAMPLE,
+            content: default_check_format_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
             path: PLAN_REVIEW_TOOL,
             example_path: PLAN_REVIEW_TOOL_EXAMPLE,
             content: default_review_tool_content(
                 "PlanReviewer",
                 PLAN_REVIEW_PROMPT,
+                "workspace-write",
+            ),
+            executable: true,
+        },
+        DefaultManagedAsset {
+            path: DECOMPOSITION_REVIEW_TOOL,
+            example_path: DECOMPOSITION_REVIEW_TOOL_EXAMPLE,
+            content: default_review_tool_content(
+                "DecompositionReviewer",
+                DECOMPOSITION_REVIEW_PROMPT,
                 "workspace-write",
             ),
             executable: true,
@@ -422,6 +698,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: false,
         },
         DefaultManagedAsset {
+            path: DECOMPOSITION_AGENT_PROMPT,
+            example_path: DECOMPOSITION_AGENT_PROMPT_EXAMPLE,
+            content: default_decomposition_agent_prompt().to_string(),
+            executable: false,
+        },
+        DefaultManagedAsset {
             path: PLAN_AGENT_PROMPT,
             example_path: PLAN_AGENT_PROMPT_EXAMPLE,
             content: default_plan_agent_prompt().to_string(),
@@ -443,6 +725,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             path: PLAN_REVIEW_PROMPT,
             example_path: PLAN_REVIEW_PROMPT_EXAMPLE,
             content: default_plan_review_prompt().to_string(),
+            executable: false,
+        },
+        DefaultManagedAsset {
+            path: DECOMPOSITION_REVIEW_PROMPT,
+            example_path: DECOMPOSITION_REVIEW_PROMPT_EXAMPLE,
+            content: default_decomposition_review_prompt().to_string(),
             executable: false,
         },
         DefaultManagedAsset {
@@ -470,17 +758,6 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: false,
         },
     ]
-}
-
-fn default_reference_examples() -> Vec<ReferenceExample> {
-    default_managed_assets()
-        .into_iter()
-        .map(|asset| ReferenceExample {
-            path: asset.example_path,
-            content: asset.content,
-            executable: asset.executable,
-        })
-        .collect()
 }
 
 pub(crate) fn refresh_default_reference_examples() -> Result<()> {
@@ -515,12 +792,16 @@ pub(crate) fn replace_default_runtime_assets_from_examples() -> Result<()> {
 pub(crate) fn print_upgrade_default_asset_guidance() {
     println!("普通 upgrade 不会替换正式 connector、prompt 或 review schema。");
     println!(
-        "请先查看刷新的 .example 文件，再手动复制需要替换的文件；如果确定使用全部默认实现，运行 codex-auto-dev upgrade --default。"
+        "请先查看刷新的 .example 文件，再手动复制需要替换的文件；如果确定使用全部默认实现，运行 sandrone upgrade --default。"
     );
 }
 
 fn default_issue_agent_prompt() -> &'static str {
     assets::ISSUE_AGENT_PROMPT
+}
+
+fn default_decomposition_agent_prompt() -> &'static str {
+    assets::DECOMPOSITION_AGENT_PROMPT
 }
 
 fn default_plan_agent_prompt() -> &'static str {
@@ -537,6 +818,10 @@ fn default_rebase_agent_prompt() -> &'static str {
 
 fn default_plan_review_prompt() -> &'static str {
     assets::PLAN_REVIEWER_PROMPT
+}
+
+fn default_decomposition_review_prompt() -> &'static str {
+    assets::DECOMPOSITION_REVIEWER_PROMPT
 }
 
 fn default_test_review_prompt() -> &'static str {

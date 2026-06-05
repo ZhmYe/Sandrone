@@ -1,0 +1,22 @@
+filters: 'file.hasTag("Sandrone/slice")'
+properties:
+  request_id:
+    displayName: "Request"
+  status:
+    displayName: "Status"
+  branch:
+    displayName: "Branch"
+  worktree:
+    displayName: "Worktree"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Slices"
+    order:
+      - file.name
+      - request_id
+      - status
+      - branch
+      - worktree
+      - updated

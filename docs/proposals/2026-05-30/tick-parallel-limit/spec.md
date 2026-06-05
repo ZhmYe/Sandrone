@@ -2,13 +2,13 @@
 
 ## 背景
 
-自动 heartbeat 会周期性运行 `codex-auto-dev tick`。如果一次 tick 对所有 eligible issue 都派发 agent，多 issue 场景下会同时打开过多 Codex 子运行，容易争抢 CPU、网络、reviewer backend 和用户注意力，也会让未来前端难以清晰展示排队状态。主控层需要提供明确的并发上限。
+自动 heartbeat 会周期性运行 `sandrone tick`。如果一次 tick 对所有 eligible issue 都派发 agent，多 issue 场景下会同时打开过多 Codex 子运行，容易争抢 CPU、网络、reviewer backend 和用户注意力，也会让未来前端难以清晰展示排队状态。主控层需要提供明确的并发上限。
 
 ## 目标
 
 - 新 workspace 默认同一时间最多自动处理 1 个 issue。
 - `tick` 支持 `--parallel-limit <N>` 单次覆盖并发上限。
-- `.codex-auto-dev/config.toml` 支持持久配置 `parallel_limit = 1`。
+- `.sandrone/config.toml` 支持持久配置 `parallel_limit = 1`。
 - running 状态的 request 必须占用并发槽，包括 `planning-agent-running`、`implementation-agent-running` 和 legacy `agent-running`。
 - 超过并发上限时，pending request 保持原状态，等待后续 tick。
 

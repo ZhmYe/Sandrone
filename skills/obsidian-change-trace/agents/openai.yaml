@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian Change Trace"
+  short_description: "Maintain Sandrone request, slice, review, and PR trace notes"
+  default_prompt: "Use $obsidian-change-trace to update this sandrone workspace's Obsidian change package, slice graph, small requirement coverage summary, review navigation, and next-action notes."

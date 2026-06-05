@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本次变更为 `codex-auto-dev tick` 增加自动 issue 处理的并发上限。新 workspace 默认 `parallel_limit = 1`，也就是同一时间最多自动处理 1 个 issue；需要并行时可以修改配置或运行 `codex-auto-dev tick --parallel-limit <N>` 单次覆盖。
+本次变更为 `sandrone tick` 增加自动 issue 处理的并发上限。新 workspace 默认 `parallel_limit = 1`，也就是同一时间最多自动处理 1 个 issue；需要并行时可以修改配置或运行 `sandrone tick --parallel-limit <N>` 单次覆盖。
 
 ## 实现前后对比
 
@@ -26,7 +26,7 @@
 ## 变更范围摘要
 
 - CLI: `tick [--parallel-limit <N>]`。
-- Config: `.codex-auto-dev/config.toml` 增加 `parallel_limit = 1`。
+- Config: `.sandrone/config.toml` 增加 `parallel_limit = 1`。
 - 状态机: tick 按剩余并发槽位截断派发列表。
 - 测试与文档: 覆盖默认、覆盖、非法参数和运行中占槽行为。
 

@@ -6,14 +6,14 @@ pub(crate) fn deliver_finished_request(
 ) -> Result<DeliveryResult> {
     if request.worktree_path.trim().is_empty() {
         return Err(format!(
-            "{} has no worktree. Run codex-auto-dev start first.",
+            "{} has no worktree. Run sandrone start first.",
             request.request_id
         )
         .into());
     }
     if request.branch.trim().is_empty() {
         return Err(format!(
-            "{} has no branch. Run codex-auto-dev start first.",
+            "{} has no branch. Run sandrone start first.",
             request.request_id
         )
         .into());
@@ -67,12 +67,11 @@ pub(crate) fn deliver_finished_request(
 }
 
 fn write_pr_body(request: &Request) -> Result<String> {
-    let body_path = Path::new(".codex-auto-dev")
+    let body_path = Path::new(".sandrone")
         .join("state")
         .join(format!("{}-pr-body.md", request.request_id));
-    let change_doc_path = Path::new(&request.change_path).join("change-doc.md");
-    let request_path = Path::new(&request.change_path).join("request.md");
-    let change_doc = fs::read_to_string(&change_doc_path)?;
+    let change_doc = pr_change_doc_content(request)?;
+    let request_path = review_context_artifact_source(request, "request.md");
     let request_doc = fs::read_to_string(&request_path)?;
     let issue_reference = render_pr_issue_reference(request);
     let review_findings = render_pr_review_findings(request);
@@ -83,11 +82,58 @@ fn write_pr_body(request: &Request) -> Result<String> {
     Ok(absolute_path_string(&body_path))
 }
 
+fn pr_change_doc_content(request: &Request) -> Result<String> {
+    let change_doc_path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
+    if change_doc_path.exists() {
+        return Ok(fs::read_to_string(change_doc_path)?);
+    }
+    if is_slice_request(request) {
+        return Err(format!(
+            "{} has no change-doc artifact: {}",
+            request.request_id,
+            change_doc_path.display()
+        )
+        .into());
+    }
+    let requests = load_requests()?;
+    let mut sections = Vec::new();
+    for slice in requests
+        .iter()
+        .filter(|candidate| slice_parent_id(candidate).as_deref() == Some(&request.request_id))
+    {
+        let slice_change_doc = existing_or_preferred_request_artifact_path(slice, "change-doc.md");
+        if !slice_change_doc.exists() {
+            continue;
+        }
+        let content = fs::read_to_string(&slice_change_doc)?;
+        sections.push(format!(
+            "## {} {}\n\n> 来源: `{}`\n\n{}",
+            slice.request_id,
+            slice.title,
+            slice_change_doc.display(),
+            content.trim_end()
+        ));
+    }
+    if sections.is_empty() {
+        return Err(format!(
+            "{} has no parent change-doc and no slice change-docs to aggregate",
+            request.request_id
+        )
+        .into());
+    }
+    Ok(format!(
+        "# Slice Change Doc 汇总: {} {}\n\n{}",
+        request.request_id,
+        request.title,
+        sections.join("\n\n---\n\n")
+    ))
+}
+
 fn render_pr_review_findings(request: &Request) -> String {
     let mut lines = vec![
         "# 自动评审意见".to_string(),
         String::new(),
-        "本节由 `codex-auto-dev finish` 从最终 review detail JSON 生成，方便人类在 PR 页面直接查看 reviewer 的 warning/info 以及必要的上下文。".to_string(),
+        "本节由 `sandrone finish` 从最终 review detail JSON 生成，方便人类在 PR 页面直接查看 reviewer 的 warning/info 以及必要的上下文。".to_string(),
         String::new(),
     ];
     let mut rendered_stage = false;
@@ -270,26 +316,26 @@ fn run_pr_tool(
     let output = Command::new("sh")
         .arg(PR_TOOL)
         .current_dir(".")
-        .env("CODEX_AUTO_DEV_REQUEST_ID", &request.request_id)
-        .env("CODEX_AUTO_DEV_REQUEST_EXTERNAL_ID", &request.external_id)
-        .env("CODEX_AUTO_DEV_REQUEST_SOURCE", &request.source)
-        .env("CODEX_AUTO_DEV_REQUEST_TITLE", &request.title)
-        .env("CODEX_AUTO_DEV_REQUEST_URL", &request.url)
-        .env("CODEX_AUTO_DEV_CHANGE_PATH", &request.change_path)
+        .env("SANDRONE_REQUEST_ID", &request.request_id)
+        .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("SANDRONE_REQUEST_SOURCE", &request.source)
+        .env("SANDRONE_REQUEST_TITLE", &request.title)
+        .env("SANDRONE_REQUEST_URL", &request.url)
+        .env("SANDRONE_CHANGE_PATH", &request.change_path)
         .env(
-            "CODEX_AUTO_DEV_CHANGE_DOC",
-            format!("{}/change-doc.md", request.change_path),
+            "SANDRONE_CHANGE_DOC",
+            request_handoff_artifact_path_string(request, "change-doc.md"),
         )
         .env(
-            "CODEX_AUTO_DEV_REQUEST",
-            format!("{}/request.md", request.change_path),
+            "SANDRONE_REQUEST",
+            request_handoff_artifact_path_string(request, "request.md"),
         )
-        .env("CODEX_AUTO_DEV_WORKTREE", &request.worktree_path)
-        .env("CODEX_AUTO_DEV_PR_TITLE", title)
-        .env("CODEX_AUTO_DEV_PR_BODY_FILE", body_file)
-        .env("CODEX_AUTO_DEV_PR_BASE", base_branch)
-        .env("CODEX_AUTO_DEV_PR_HEAD", head_branch)
-        .env("CODEX_AUTO_DEV_PR_COMPARE_URL", compare_url)
+        .env("SANDRONE_WORKTREE", &request.worktree_path)
+        .env("SANDRONE_PR_TITLE", title)
+        .env("SANDRONE_PR_BODY_FILE", body_file)
+        .env("SANDRONE_PR_BASE", base_branch)
+        .env("SANDRONE_PR_HEAD", head_branch)
+        .env("SANDRONE_PR_COMPARE_URL", compare_url)
         .envs(proxy_env())
         .output();
     let Ok(output) = output else {

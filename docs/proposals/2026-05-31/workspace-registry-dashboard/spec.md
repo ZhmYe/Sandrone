@@ -6,11 +6,11 @@
 
 ## 目标
 
-- 新增全局 workspace registry，默认路径为 `~/.codex-auto-dev/workspaces.json`，支持 `CODEX_AUTO_DEV_HOME` 覆盖。
+- 新增全局 workspace registry，默认路径为 `~/.sandrone/workspaces.json`，支持 `SANDRONE_HOME` 覆盖。
 - `new`、`upgrade`、`list` 和 `dashboard` 必须刷新 registry，使旧 workspace 和新 workspace 都能被本地 dashboard 发现。
-- 保留 `codex-auto-dev` 命令，同时提供短别名 `cad`。
-- 新增 `codex-auto-dev dashboard`，启动本地浏览器页面。
-- 新增 `codex-auto-dev dashboard --json`，输出 dashboard 数据模型，便于测试、前端和后续机器人复用。
+- 保留 `sandrone` 命令，同时提供短别名 `sdr`。
+- 新增 `sandrone dashboard`，启动本地浏览器页面。
+- 新增 `sandrone dashboard --json`，输出 dashboard 数据模型，便于测试、前端和后续机器人复用。
 - Dashboard 按项目区分 request，并提供 6 段 timeline: `Request -> Plan -> Plan Review -> Implementation -> Code Review -> Finish / PR`。
 - 普通 stage 展示一个核心文件；review stage 展示每轮 reviewer detail JSON，不依赖会被覆盖的 `summary.json`。
 - request 区域使用纵向列表，便于处理较多需求。
@@ -56,5 +56,5 @@ Dashboard API:
 ## 风险
 
 - 文件很多时 dashboard JSON 可能较大。本次先对单个 artifact 做长度截断，后续可按需拆分 API。
-- `cad` 作为包装二进制依赖同目录下存在 `codex-auto-dev`，符合 `cargo install` 同时安装两个 bin 的场景。
+- `sdr` 作为包装二进制依赖同目录下存在 `sandrone`，符合 `cargo install` 同时安装两个 bin 的场景。
 - Dashboard 渲染库来自 CDN，离线环境会回退为纯文本。后续如需完全离线，可把这些资源 vendored 到二进制或 workspace。

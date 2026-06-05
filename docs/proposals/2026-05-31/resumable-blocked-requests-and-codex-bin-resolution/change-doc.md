@@ -7,7 +7,7 @@
 ## 实现前后对比
 
 - 实现前: 默认 `issue-agent.sh` 和 reviewer scripts 直接调用 `codex exec`，普通终端 PATH 没有 codex 时会失败。
-- 实现后: 默认 connector 使用 `resolve_codex_bin`，优先读取 `CODEX_AUTO_DEV_CODEX_BIN`，其次查 PATH，最后使用用户显式提供的 `CODEX_AUTO_DEV_CODEX_APP` bundle。
+- 实现后: 默认 connector 使用 `resolve_codex_bin`，优先读取 `SANDRONE_CODEX_BIN`，其次查 PATH，最后使用用户显式提供的 `SANDRONE_CODEX_APP` bundle。
 - 实现前: `resume` 只打印 request、plan、change-doc、recovery 等路径，`requests.tsv` 和 `status.json` 仍是 `blocked`。
 - 实现后: `resume` 对 blocked request 会按 approval 状态恢复为 `planning` 或 `in-progress`，同步状态文件、session 和事件流，后续 `tick --request_id` 可以派发。
 
@@ -15,7 +15,7 @@
 
 ### 不写死本机路径
 
-默认脚本不包含 `/Applications/Codex.app`。如果用户从普通终端运行，需要显式设置 `CODEX_AUTO_DEV_CODEX_BIN` 或 `CODEX_AUTO_DEV_CODEX_APP`，或者把 `codex` 放进 PATH。这样框架可以跨安装位置、跨平台和跨后端替换。
+默认脚本不包含 `/Applications/Codex.app`。如果用户从普通终端运行，需要显式设置 `SANDRONE_CODEX_BIN` 或 `SANDRONE_CODEX_APP`，或者把 `codex` 放进 PATH。这样框架可以跨安装位置、跨平台和跨后端替换。
 
 ### Reviewer Gate 失败仍然安全
 

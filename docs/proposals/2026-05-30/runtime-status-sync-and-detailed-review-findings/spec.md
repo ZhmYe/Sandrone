@@ -2,7 +2,7 @@
 
 ## 背景
 
-自动流程中存在两个需要收紧的问题。第一，`advance` 以 `.codex-auto-dev/state/requests.tsv` 为主要状态源，如果该索引落后于 `docs/changes/<name>/status.json`，可能把已经进入 implementation 或 change-doc review 的 request 当成 `plan-submitted` 重新处理，导致重复 plan-review 和重复 implementation 派发。第二，reviewer finding 只有 `required_fix` 时仍可能过于笼统，下一轮 agent 不一定知道具体怎么改和怎么验证。
+自动流程中存在两个需要收紧的问题。第一，`advance` 以 `.sandrone/state/requests.tsv` 为主要状态源，如果该索引落后于 `docs/changes/<name>/status.json`，可能把已经进入 implementation 或 change-doc review 的 request 当成 `plan-submitted` 重新处理，导致重复 plan-review 和重复 implementation 派发。第二，reviewer finding 只有 `required_fix` 时仍可能过于笼统，下一轮 agent 不一定知道具体怎么改和怎么验证。
 
 ## 目标
 

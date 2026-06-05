@@ -21,7 +21,7 @@
 
 ### Issue Agent 不得绕过
 
-默认 issue-agent 脚本契约和 prompt 明确禁止调用 `codex-auto-dev approve/reject`，禁止手写或修改 approval JSON，禁止修改 reviewer 脚本或 schema 来绕过门禁。发现 `gate_unavailable: true` 必须 block。
+默认 issue-agent 脚本契约和 prompt 明确禁止调用 `sandrone approve/reject`，禁止手写或修改 approval JSON，禁止修改 reviewer 脚本或 schema 来绕过门禁。发现 `gate_unavailable: true` 必须 block。
 
 ## 变更范围摘要
 
@@ -38,5 +38,5 @@
 
 ## 风险与后续
 
-- 旧 workspace 需要 `codex-auto-dev upgrade` 才能获得更新后的默认 prompt 和 schema；用户自定义 reviewer 不会被覆盖。
+- 旧 workspace 需要 `sandrone upgrade` 才能获得更新后的默认 prompt 和 schema；用户自定义 reviewer 不会被覆盖。
 - 如果 reviewer 后端经常不可用，应该修复 connector 或提供稳定的替代后端，而不是让 issue-agent 跳过 gate。

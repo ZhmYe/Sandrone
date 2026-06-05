@@ -14,7 +14,7 @@ pub(crate) fn dashboard(args: &[String]) -> Result<()> {
     let port = parse_dashboard_port(flag_value(args, "--port")?)?;
     let listener = TcpListener::bind(format!("{host}:{port}"))?;
     let address = listener.local_addr()?;
-    println!("Codex Auto Dev dashboard running:");
+    println!("sandrone dashboard running:");
     println!("  http://{address}/");
     println!(
         "  registry: {}",
@@ -129,22 +129,35 @@ fn render_dashboard_json_from_registry() -> Result<String> {
 }
 
 fn render_dashboard_project_json(record: &WorkspaceRecord) -> Result<String> {
-    let requests_json = if record.last_status == "ready"
+    let (requests_json, request_count, status_counts_json) = if record.last_status == "ready"
         && Path::new(&record.workspace_path).join(CONFIG_PATH).exists()
     {
         registry::with_current_dir(Path::new(&record.workspace_path), || {
             let requests = load_requests()?;
+            let parent_requests = requests
+                .iter()
+                .filter(|request| is_parent_request(request))
+                .collect::<Vec<_>>();
+            let status_counts = dashboard_status_counts(&parent_requests);
             let mut rendered = String::new();
-            for (index, request) in requests.iter().enumerate() {
+            for (index, request) in parent_requests.iter().enumerate() {
                 if index > 0 {
                     rendered.push_str(",\n");
                 }
-                rendered.push_str(&render_dashboard_request_json(request)?);
+                rendered.push_str(&render_dashboard_parent_request_json(request, &requests)?);
             }
-            Ok(rendered)
+            Ok((
+                rendered,
+                parent_requests.len(),
+                registry::render_usize_map_json(&status_counts),
+            ))
         })?
     } else {
-        String::new()
+        (
+            String::new(),
+            record.request_count,
+            registry::render_usize_map_json(&record.status_counts),
+        )
     };
 
     Ok(format!(
@@ -155,29 +168,87 @@ fn render_dashboard_project_json(record: &WorkspaceRecord) -> Result<String> {
         json_escape(&record.workspace_path),
         json_escape(&record.target_repo),
         json_escape(&record.last_status),
-        record.request_count,
-        registry::render_usize_map_json(&record.status_counts),
+        request_count,
+        status_counts_json,
         json_escape(&record.updated_at),
         requests_json,
     ))
 }
 
-fn render_dashboard_request_json(request: &Request) -> Result<String> {
-    let stages = [
-        render_dashboard_stage_json(
+fn dashboard_status_counts(requests: &[&Request]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for request in requests {
+        *counts.entry(request.status.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn render_dashboard_parent_request_json(
+    request: &Request,
+    all_requests: &[Request],
+) -> Result<String> {
+    let decomposition_stages = render_dashboard_decomposition_stages(request)?;
+    let slices = all_requests
+        .iter()
+        .filter(|candidate| slice_parent_id(candidate).as_deref() == Some(&request.request_id))
+        .collect::<Vec<_>>();
+    let mut slices_json = String::new();
+    for (index, slice) in slices.iter().enumerate() {
+        if index > 0 {
+            slices_json.push_str(",\n");
+        }
+        slices_json.push_str(&render_dashboard_slice_request_json(slice)?);
+    }
+    let pr_stages = render_dashboard_pr_stages(request)?;
+    render_dashboard_request_object_json(
+        request,
+        &decomposition_stages,
+        &format!(
+            ",\n          \"decomposition\": {{ \"label\": \"需求分析\", \"stages\": [\n{}\n          ] }},\n          \"slices\": [\n{}\n          ],\n          \"pr\": {{ \"label\": \"PR\", \"stages\": [\n{}\n          ] }}",
+            decomposition_stages.join(",\n"),
+            slices_json,
+            pr_stages.join(",\n"),
+        ),
+    )
+}
+
+fn render_dashboard_decomposition_stages(request: &Request) -> Result<Vec<String>> {
+    let mut stages = vec![render_dashboard_stage_json(
+        request,
+        "request",
+        "Request",
+        "需求记录",
+        &request_artifact_path(request, "request.md"),
+        dashboard_request_content(request),
+        "markdown",
+    )?];
+    if dashboard_has_decomposition(request) {
+        stages.push(render_dashboard_stage_json(
             request,
-            "request",
-            "Request",
-            "需求记录",
-            &request_artifact_path(request, "request.md"),
-            dashboard_request_content(request),
+            "decomposition",
+            "Decomposition",
+            "需求拆解",
+            &request_artifact_path(request, "decomposition.md"),
+            dashboard_file_content(&request_artifact_path(request, "decomposition.md")),
             "markdown",
-        )?,
+        )?);
+        stages.push(render_dashboard_review_stage_json(
+            request,
+            "decomposition-review",
+            "Decomposition Review",
+            "拆解评审",
+        )?);
+    }
+    Ok(stages)
+}
+
+fn render_dashboard_slice_request_json(request: &Request) -> Result<String> {
+    let stages = vec![
         render_dashboard_stage_json(
             request,
             "plan",
             "Plan",
-            "计划",
+            "计划文档",
             &request_artifact_path(request, "plan.md"),
             dashboard_file_content(&request_artifact_path(request, "plan.md")),
             "markdown",
@@ -193,37 +264,48 @@ fn render_dashboard_request_json(request: &Request) -> Result<String> {
             "markdown",
         )?,
         render_dashboard_review_stage_json(request, "code-review", "Code Review", "代码评审")?,
-        {
-            let finish_path = finish_artifact_path(request);
-            let finish_kind = dashboard_artifact_kind(&finish_path, "markdown");
-            render_dashboard_stage_json(
-                request,
-                "finish-pr",
-                "Finish / PR",
-                "交付与 PR",
-                &finish_path,
-                dashboard_file_content(&finish_path),
-                &finish_kind,
-            )?
-        },
-        render_dashboard_stage_json(
+    ];
+    render_dashboard_request_object_json(request, &stages, "")
+}
+
+fn render_dashboard_pr_stages(request: &Request) -> Result<Vec<String>> {
+    let pr_refresh_artifact = dashboard_pr_refresh_artifact_path(request);
+    let mut stages = vec![render_dashboard_stage_json(
+        request,
+        "finish-pr",
+        "PR",
+        "PR 交付",
+        &request_handoff_artifact_path_string(request, "pr-doc.md"),
+        dashboard_file_content(&request_handoff_artifact_path_string(request, "pr-doc.md")),
+        "markdown",
+    )?];
+    if dashboard_has_pr_refresh(request) {
+        stages.push(render_dashboard_stage_json(
             request,
             "pr-refresh",
             "PR Refresh",
-            "PR 冲突与刷新记录",
-            &pr_refresh_artifact_path(request),
-            pr_refresh_artifact_content(request),
+            "PR 冲突刷新",
+            &pr_refresh_artifact,
+            dashboard_file_content(&pr_refresh_artifact),
             "markdown",
-        )?,
-        render_dashboard_review_stage_json(
+        )?);
+        stages.push(render_dashboard_review_stage_json(
             request,
             "integration-review",
             "Integration Review",
             "集成评审",
-        )?,
-    ];
+        )?);
+    }
+    Ok(stages)
+}
+
+fn render_dashboard_request_object_json(
+    request: &Request,
+    stages: &[String],
+    extra_fields: &str,
+) -> Result<String> {
     Ok(format!(
-        "        {{\n          \"request_id\": \"{}\",\n          \"external_id\": \"{}\",\n          \"source\": \"{}\",\n          \"title\": \"{}\",\n          \"body\": \"{}\",\n          \"url\": \"{}\",\n          \"status\": \"{}\",\n          \"stage\": \"{}\",\n          \"change_name\": \"{}\",\n          \"change_path\": \"{}\",\n          \"branch\": \"{}\",\n          \"worktree_path\": \"{}\",\n          \"created_at\": \"{}\",\n          \"updated_at\": \"{}\",\n          \"stages\": [\n{}\n          ]\n        }}",
+        "        {{\n          \"request_id\": \"{}\",\n          \"external_id\": \"{}\",\n          \"source\": \"{}\",\n          \"title\": \"{}\",\n          \"body\": \"{}\",\n          \"url\": \"{}\",\n          \"status\": \"{}\",\n          \"stage\": \"{}\",\n          \"change_name\": \"{}\",\n          \"change_path\": \"{}\",\n          \"branch\": \"{}\",\n          \"worktree_path\": \"{}\",\n          \"created_at\": \"{}\",\n          \"updated_at\": \"{}\",\n          \"stages\": [\n{}\n          ]{}\n        }}",
         json_escape(&request.request_id),
         json_escape(&request.external_id),
         json_escape(&request.source),
@@ -239,6 +321,7 @@ fn render_dashboard_request_json(request: &Request) -> Result<String> {
         json_escape(&request.created_at),
         json_escape(&request.updated_at),
         stages.join(",\n"),
+        extra_fields,
     ))
 }
 
@@ -251,13 +334,15 @@ fn render_dashboard_stage_json(
     content: String,
     artifact_kind: &str,
 ) -> Result<String> {
+    let artifact_name = dashboard_artifact_name(artifact_path, title);
     Ok(format!(
-        "            {{ \"stage_id\": \"{}\", \"label\": \"{}\", \"title\": \"{}\", \"state\": \"{}\", \"artifact_path\": \"{}\", \"artifact_kind\": \"{}\", \"content\": \"{}\", \"review_attempts\": [] }}",
+        "            {{ \"stage_id\": \"{}\", \"label\": \"{}\", \"title\": \"{}\", \"state\": \"{}\", \"artifact_path\": \"{}\", \"artifact_name\": \"{}\", \"artifact_kind\": \"{}\", \"content\": \"{}\", \"review_attempts\": [] }}",
         json_escape(stage_id),
         json_escape(label),
         json_escape(title),
         json_escape(&dashboard_stage_state(request, stage_id)),
         json_escape(artifact_path),
+        json_escape(&artifact_name),
         json_escape(artifact_kind),
         json_escape(&content),
     ))
@@ -275,19 +360,38 @@ fn render_dashboard_review_stage_json(
     } else {
         format!("{}/reviews/{stage_id}/details", request.change_path)
     };
+    let artifact_name = if artifact_path.is_empty() {
+        title.to_string()
+    } else {
+        format!("reviews/{stage_id}/details")
+    };
     Ok(format!(
-        "            {{ \"stage_id\": \"{}\", \"label\": \"{}\", \"title\": \"{}\", \"state\": \"{}\", \"artifact_path\": \"{}\", \"artifact_kind\": \"review-details\", \"content\": \"\", \"review_attempts\": {} }}",
+        "            {{ \"stage_id\": \"{}\", \"label\": \"{}\", \"title\": \"{}\", \"state\": \"{}\", \"artifact_path\": \"{}\", \"artifact_name\": \"{}\", \"artifact_kind\": \"review-details\", \"content\": \"\", \"review_attempts\": {} }}",
         json_escape(stage_id),
         json_escape(label),
         json_escape(title),
         json_escape(&dashboard_stage_state(request, stage_id)),
         json_escape(&artifact_path),
+        json_escape(&artifact_name),
         attempts,
     ))
 }
 
+fn dashboard_artifact_name(artifact_path: &str, fallback: &str) -> String {
+    Path::new(artifact_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 fn dashboard_current_stage(status: &str) -> String {
     match canonical_status(status) {
+        "decomposition" | "decomposition-agent-running" | "decomposition-review-rejected" => {
+            "decomposition".to_string()
+        }
+        "decomposition-submitted" => "decomposition-review".to_string(),
         "discovered" | "planning" | "planning-agent-running" | "plan-review-rejected" => {
             "plan".to_string()
         }
@@ -300,6 +404,7 @@ fn dashboard_current_stage(status: &str) -> String {
         "change-doc-approved" | "wait-update-pr" | "wait-finish" | "finished" => {
             "finish-pr".to_string()
         }
+        STATUS_SLICE_FINISHED => "finish-pr".to_string(),
         "rebase-agent-running" | "integration-review-rejected" => "pr-refresh".to_string(),
         "integration-review-submitted" => "integration-review".to_string(),
         "blocked" => "blocked".to_string(),
@@ -313,7 +418,22 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
     let status = canonical_status(&request.status);
     match stage_id {
         "request" => "done".to_string(),
-        "plan" if rank >= 30 => "done".to_string(),
+        "decomposition" if rank >= 10 => "done".to_string(),
+        "decomposition"
+            if matches!(
+                status,
+                "decomposition" | "decomposition-agent-running" | "decomposition-review-rejected"
+            ) =>
+        {
+            "active".to_string()
+        }
+        "decomposition" => "pending".to_string(),
+        "decomposition-review" if rank >= 15 => "done".to_string(),
+        "decomposition-review" if matches!(status, "decomposition-submitted") => {
+            "active".to_string()
+        }
+        "decomposition-review" => "pending".to_string(),
+        "plan" if rank >= 40 => "done".to_string(),
         "plan"
             if matches!(
                 status,
@@ -323,7 +443,7 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
             "active".to_string()
         }
         "plan" => "pending".to_string(),
-        "plan-review" if rank >= 40 => "done".to_string(),
+        "plan-review" if rank >= 50 => "done".to_string(),
         "plan-review" if matches!(status, "plan-submitted") => "active".to_string(),
         "plan-review" => "pending".to_string(),
         "implementation" if rank >= 70 => "done".to_string(),
@@ -343,6 +463,7 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         "code-review" if matches!(status, "change-doc-submitted") => "active".to_string(),
         "code-review" => "pending".to_string(),
         "finish-pr" if status == STATUS_FINISHED => "done".to_string(),
+        "finish-pr" if status == STATUS_SLICE_FINISHED => "done".to_string(),
         "finish-pr" if matches!(status, "change-doc-approved" | STATUS_WAIT_UPDATE_PR) => {
             "active".to_string()
         }
@@ -393,12 +514,6 @@ fn dashboard_has_pr_refresh(request: &Request) -> bool {
     ) {
         return true;
     }
-    let pr_status_path = Path::new(".codex-auto-dev")
-        .join("state")
-        .join(format!("{}-pr-status.tsv", request.request_id));
-    if pr_status_path.exists() {
-        return true;
-    }
     let integration_details =
         Path::new(&request.change_path).join("reviews/integration-review/details");
     if integration_details.is_dir() {
@@ -408,133 +523,55 @@ fn dashboard_has_pr_refresh(request: &Request) -> bool {
     if conflict_attempts.is_dir() {
         return true;
     }
-    let change_doc_path = Path::new(&request.change_path).join("change-doc.md");
+    let change_doc_path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
     fs::read_to_string(change_doc_path)
         .map(|content| content.contains("PR 集成刷新记录") || content.contains("PR 冲突记录"))
         .unwrap_or(false)
 }
 
-fn request_artifact_path(request: &Request, file: &str) -> String {
-    if request.change_path.is_empty() {
-        String::new()
-    } else {
-        Path::new(&request.change_path)
-            .join(file)
-            .to_string_lossy()
-            .to_string()
+fn dashboard_pr_refresh_artifact_path(request: &Request) -> String {
+    let conflict_attempts = Path::new(&request.change_path).join("pr-conflicts/attempts");
+    if let Ok(entries) = fs::read_dir(conflict_attempts) {
+        let mut attempt_paths = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension == "md")
+            {
+                attempt_paths.push(path.to_string_lossy().to_string());
+            }
+        }
+        attempt_paths.sort();
+        if let Some(path) = attempt_paths.pop() {
+            return path;
+        }
     }
-}
 
-fn dashboard_artifact_kind(path: &str, default_kind: &str) -> String {
-    if path.ends_with(".json") {
-        "json".to_string()
-    } else {
-        default_kind.to_string()
-    }
-}
-
-fn finish_artifact_path(request: &Request) -> String {
-    let pr_body_path = Path::new(".codex-auto-dev")
+    let pr_status_path = Path::new(".sandrone")
         .join("state")
-        .join(format!("{}-pr-body.md", request.request_id));
-    if pr_body_path.exists() {
-        return pr_body_path.to_string_lossy().to_string();
+        .join(format!("{}-pr-status.tsv", request.request_id));
+    if pr_status_path.exists() {
+        return pr_status_path.to_string_lossy().to_string();
     }
-    request_artifact_path(request, "status.json")
+
+    request_handoff_artifact_path_string(request, "pr-doc.md")
 }
 
-fn pr_refresh_artifact_path(request: &Request) -> String {
-    if request.change_path.is_empty() {
-        return String::new();
-    }
-    let attempts_dir = pr_conflict_attempts_dir(request);
-    if dashboard_pr_conflict_attempt_files(&attempts_dir)
-        .map(|files| !files.is_empty())
-        .unwrap_or(false)
-    {
-        return attempts_dir.to_string_lossy().to_string();
-    }
-    request_artifact_path(request, "change-doc.md")
-}
-
-fn pr_refresh_artifact_content(request: &Request) -> String {
-    if request.change_path.is_empty() {
-        return String::new();
-    }
-    let attempts_dir = pr_conflict_attempts_dir(request);
-    if let Ok(files) = dashboard_pr_conflict_attempt_files(&attempts_dir) {
-        if !files.is_empty() {
-            return dashboard_pr_conflict_attempt_content(&files);
-        }
-    }
-
-    let change_doc_path = request_artifact_path(request, "change-doc.md");
-    let change_doc = fs::read_to_string(&change_doc_path).unwrap_or_default();
-    let extracted = extract_pr_refresh_sections(&change_doc);
-    if extracted.trim().is_empty() {
-        return String::new();
-    }
-    truncate_dashboard_content(&format!("# PR Refresh 记录\n\n{}", extracted.trim()))
-}
-
-fn pr_conflict_attempts_dir(request: &Request) -> PathBuf {
+fn dashboard_has_decomposition(request: &Request) -> bool {
     Path::new(&request.change_path)
-        .join("pr-conflicts")
-        .join("attempts")
+        .join(".decomposition-kind")
+        .exists()
+        || Path::new(&request.change_path).join(".epic-kind").exists()
+        || existing_or_preferred_request_artifact_path(request, "decomposition.md").exists()
 }
 
-fn dashboard_pr_conflict_attempt_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut files = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) == Some("md") {
-            files.push(path);
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
-fn dashboard_pr_conflict_attempt_content(files: &[PathBuf]) -> String {
-    let mut content = String::from("# PR Refresh 冲突记录\n\n");
-    content.push_str("这里按发生顺序展示 `pr-refresh` 过程中真实产生的 rebase 冲突 attempt。clean rebase 不会生成冲突 attempt。\n");
-    for path in files {
-        let display_path = path.to_string_lossy();
-        content.push_str("\n---\n\n");
-        content.push_str(&format!("> 来源: `{}`\n\n", markdown_inline(&display_path)));
-        match fs::read_to_string(path) {
-            Ok(record) => content.push_str(record.trim_end()),
-            Err(error) => content.push_str(&format!(
-                "无法读取冲突记录 `{}`: {}",
-                markdown_inline(&display_path),
-                markdown_inline(&error.to_string())
-            )),
-        }
-        content.push('\n');
-    }
-    truncate_dashboard_content(&content)
-}
-
-fn extract_pr_refresh_sections(content: &str) -> String {
-    let mut extracted = String::new();
-    let mut include = false;
-    for line in content.lines() {
-        if line.starts_with("## ") {
-            include = line.starts_with("## PR 集成刷新记录") || line.starts_with("## PR 冲突记录");
-        }
-        if include {
-            extracted.push_str(line);
-            extracted.push('\n');
-        }
-    }
-    extracted
+fn request_artifact_path(request: &Request, file: &str) -> String {
+    request_artifact_path_string(request, file)
 }
 
 fn dashboard_request_content(request: &Request) -> String {

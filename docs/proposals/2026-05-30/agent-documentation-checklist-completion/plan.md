@@ -4,7 +4,7 @@
 
 1. 先补集成测试，覆盖 skill、implementation agent prompt 和 runtime change-doc 模板。
 2. 更新 `src/main.rs` 中的默认 issue-agent prompt、implementation-agent prompt 和 change-doc 模板。
-3. 更新 `skills/codex-auto-dev-workflow/SKILL.md` 和 README 的关键规则。
+3. 更新 `skills/sandrone/SKILL.md` 和 README 的关键规则。
 4. 新增 proposal 记录并更新 `proposal.json`。
 5. 运行格式、编译、clippy、测试、proposal 校验和 diff 检查。
 
@@ -13,7 +13,7 @@
 - `src/main.rs`: 默认 prompt 和 `render_change_doc_template`。
 - `tests/cli_flow.rs`: 生成内容和 skill 内容断言。
 - `README.md`: 使用者可见的关键规则。
-- `skills/codex-auto-dev-workflow/SKILL.md`: Codex 使用 skill 时读取的规则。
+- `skills/sandrone/SKILL.md`: Codex 使用 skill 时读取的规则。
 - `docs/proposals/2026-05-30/agent-documentation-checklist-completion/`: 本次框架自身变更记录。
 
 ## 设计说明

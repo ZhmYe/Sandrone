@@ -13,7 +13,7 @@
 
 - `src/main.rs`: CodeGraph helper、clone 流程、plan preflight、doctor、默认 prompt。
 - `tests/cli_flow.rs`: fake CodeGraph 测试与 doctor 断言。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: 生命周期说明。
+- `README.md`、`skills/sandrone/SKILL.md`: 生命周期说明。
 
 ## 兼容性
 

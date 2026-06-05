@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增 `codex-auto-dev doctor`，检查 workspace、Git、Codex CLI、GitHub CLI、目标仓库、agent/reviewer connector、review schema 和事件流目录。
-- 新增 `.codex-auto-dev/state/events.ndjson`，为关键状态变化追加 JSON Lines 事件。
+- 新增 `sandrone doctor`，检查 workspace、Git、Codex CLI、GitHub CLI、目标仓库、agent/reviewer connector、review schema 和事件流目录。
+- 新增 `.sandrone/state/events.ndjson`，为关键状态变化追加 JSON Lines 事件。
 - 扩展 review schema，要求 `recommended_next_phase` 字段。
 - code-review rejected 时根据 reviewer 建议回到 planning、implementation 或 blocked。
 - 更新 README、skill、默认 reviewer prompt 和测试。

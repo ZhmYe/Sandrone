@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 新增 `codex-auto-dev advance --request_id <REQ>`，只推进单个 request，不运行 issue update。
+- 新增 `sandrone advance --request_id <REQ>`，只推进单个 request，不运行 issue update。
 - agent wrapper 在 `tools/issue-agent.sh` 退出并写入 exit code 后，立即调用 `advance`。
 - `advance` 负责刷新当前 request、提交 gate、运行 reviewer、创建 worktree、派发下一 phase、进入 `waiting-finish` 或 `blocked`。
 - 通过 per-request lock 防止 hook 和 heartbeat 同时推进同一个 request。

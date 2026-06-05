@@ -38,7 +38,7 @@
 - `assets/**`: 新增固定静态资产。
 - `templates/**`: 新增默认模板资产。
 - `tests/cli_flow.rs`: 新增结构约束测试。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: 补充源码维护结构说明。
+- `README.md`、`skills/sandrone/SKILL.md`: 补充源码维护结构说明。
 
 ## 验证证据
 

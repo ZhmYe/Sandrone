@@ -6,7 +6,7 @@ This change initializes the project as a Rust CLI framework for wrapping any git
 
 ## Changes
 
-- Replaces the initial Node.js CLI prototype with a Rust binary named `codex-auto-dev`.
+- Replaces the initial Node.js CLI prototype with a Rust binary named `sandrone`.
 - Adds `init <git-url>` to clone target repositories into `dev/repo`.
 - Adds `new <project-name>` for from-scratch projects.
 - Adds `request <title> [body]` for manual user requirements.
@@ -14,7 +14,7 @@ This change initializes the project as a Rust CLI framework for wrapping any git
 - Adds `codegraph [--refresh]` and automatic best-effort CodeGraph docs generation.
 - Adds `update`, `tick`, `plan`, `approve`, `start`, and `validate` workflow commands.
 - Adds default `tools/issue-update.sh` as a replaceable issue connector.
-- Adds default `skills/codex-auto-dev-workflow/SKILL.md` as the Codex operating guide.
+- Adds default `skills/sandrone/SKILL.md` as the Codex operating guide.
 - Adds `docs/constitution.md` to define repository contribution and automation rules.
 - Adds `proposal.json` as the root proposal index.
 - Adds `scripts/validate_proposals.py` to enforce proposal artifact requirements.

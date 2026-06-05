@@ -13,7 +13,7 @@
 
 - `src/main.rs`: `Config`、config read/write、`tick` 参数解析和并发槽位计算。
 - `tests/cli_flow.rs`: 默认并发、运行中占槽、flag 覆盖、非法参数测试。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: 使用说明。
+- `README.md`、`skills/sandrone/SKILL.md`: 使用说明。
 - `docs/proposals/2026-05-30/tick-parallel-limit/`: 本次变更记录。
 
 ## 设计说明

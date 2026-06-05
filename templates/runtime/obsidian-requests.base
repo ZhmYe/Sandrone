@@ -1,0 +1,31 @@
+filters:
+  or:
+    - 'file.hasTag("Sandrone/request")'
+    - 'file.hasTag("Sandrone/project")'
+properties:
+  request_id:
+    displayName: "Request"
+  status:
+    displayName: "Status"
+  source:
+    displayName: "Source"
+  external_id:
+    displayName: "External ID"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Requests"
+    order:
+      - file.name
+      - request_id
+      - status
+      - source
+      - external_id
+      - updated
+  - type: cards
+    name: "Cards"
+    order:
+      - file.name
+      - status
+      - updated

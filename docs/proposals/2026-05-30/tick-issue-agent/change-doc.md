@@ -21,7 +21,7 @@
 
 ### 批量异步 Tick
 
-`tick` 先刷新既有 agent 的 exit code 和 approval 状态，再为全部 eligible request 准备文档包并异步启动 `tools/issue-agent.sh`。每个 agent 的 pid、stdout、stderr 和 exit code 写入 `.codex-auto-dev/state/agents/`，下一次 tick 根据这些文件把 request 推进到 `waiting-finish` 或 `blocked`。
+`tick` 先刷新既有 agent 的 exit code 和 approval 状态，再为全部 eligible request 准备文档包并异步启动 `tools/issue-agent.sh`。每个 agent 的 pid、stdout、stderr 和 exit code 写入 `.sandrone/state/agents/`，下一次 tick 根据这些文件把 request 推进到 `waiting-finish` 或 `blocked`。
 
 ### 简洁 Runtime 文档
 

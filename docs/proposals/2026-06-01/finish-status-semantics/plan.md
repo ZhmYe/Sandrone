@@ -15,7 +15,7 @@
 
 ## 风险点
 
-- 旧 workspace 的 `.codex-auto-dev/state/requests.tsv` 和 `docs/changes/*/status.json` 可能仍写着旧状态，因此加载和同步都必须做 canonical 兼容。
+- 旧 workspace 的 `.sandrone/state/requests.tsv` 和 `docs/changes/*/status.json` 可能仍写着旧状态，因此加载和同步都必须做 canonical 兼容。
 - Dashboard 使用全局 registry，状态计数依赖 `load_requests()`；刷新 registry 时必须看到新语义。
 - `finished` legacy 修正不能误把未合并 PR 当成完成。
 

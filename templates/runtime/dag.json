@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "request_id": "{{request_id}}",
+  "nodes": [
+    {
+      "id": "S01",
+      "name": "example-foundation",
+      "status": "draft",
+      "depends_on": [],
+      "parallel_group": "foundation",
+      "conflict_domains": [],
+      "branch": "codex/{{request_id_lower}}-s01-example-foundation",
+      "worktree": ""
+    }
+  ],
+  "edges": [],
+  "parallel_policy": {
+    "max_parallel_slices": 1,
+    "respect_conflict_domains": true
+  },
+  "updated_at": "{{updated_at}}"
+}
+

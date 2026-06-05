@@ -14,7 +14,7 @@
 - `src/main.rs`: worktree 创建前的目标仓库同步逻辑。
 - `tests/cli_flow.rs`: start 自动 pull 和 pull 失败 block 测试。
 - `README.md`: worktree 创建前同步规则。
-- `skills/codex-auto-dev-workflow/SKILL.md`: skill 中的 start/worktree 门禁说明。
+- `skills/sandrone/SKILL.md`: skill 中的 start/worktree 门禁说明。
 - `docs/proposals/2026-05-31/worktree-start-auto-pull/`: 本次框架变更记录。
 
 ## 风险与兼容

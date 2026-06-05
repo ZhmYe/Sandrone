@@ -28,7 +28,7 @@
 - `assets/dashboard/index.html`: dashboard 页面新位置。
 - `src/assets.rs`: 更新 include 路径。
 - `tests/cli_flow.rs`: 更新结构测试。
-- `README.md`、`skills/codex-auto-dev-workflow/SKILL.md`: 更新源码维护结构说明。
+- `README.md`、`skills/sandrone/SKILL.md`: 更新源码维护结构说明。
 - `docs/proposals/2026-05-31/source-template-module-refactor/`: 修正文档中的 assets/templates 边界。
 
 ## 验证证据

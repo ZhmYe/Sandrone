@@ -33,7 +33,7 @@
 - 新增 `src/defaults.rs`、`src/review_gate.rs`、`src/state.rs`、`src/delivery.rs`、`src/doctor.rs`、`src/utils.rs`。
 - 更新 `src/main.rs` 的模块声明和 crate 内 re-export。
 - 更新 `tests/cli_flow.rs` 的结构测试。
-- 更新 `README.md` 和 `skills/codex-auto-dev-workflow/SKILL.md` 的源码维护结构说明。
+- 更新 `README.md` 和 `skills/sandrone/SKILL.md` 的源码维护结构说明。
 
 ## 验证证据
 

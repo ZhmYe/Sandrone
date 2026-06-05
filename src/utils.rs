@@ -44,6 +44,15 @@ pub(crate) fn absolute_path_string(path: impl AsRef<Path>) -> String {
         .to_string()
 }
 
+pub(crate) fn absolute_path_string_or_empty(path: impl AsRef<Path>) -> String {
+    let path = path.as_ref();
+    if path.as_os_str().is_empty() {
+        String::new()
+    } else {
+        absolute_path_string(path)
+    }
+}
+
 pub(crate) fn toml_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -244,7 +253,7 @@ pub(crate) fn review_has_blocking_findings(content: &str) -> bool {
         || content.contains("\"severity\": \"high\"")
 }
 
-fn json_array_content(content: &str, key: &str) -> Option<String> {
+pub(crate) fn json_array_content(content: &str, key: &str) -> Option<String> {
     let pattern = format!("\"{}\"", key);
     let key_index = content.find(&pattern)?;
     let after_key = &content[key_index + pattern.len()..];
@@ -286,7 +295,7 @@ fn json_array_content(content: &str, key: &str) -> Option<String> {
     None
 }
 
-fn json_objects_in_array(array: &str) -> Vec<String> {
+pub(crate) fn json_objects_in_array(array: &str) -> Vec<String> {
     let mut objects = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;

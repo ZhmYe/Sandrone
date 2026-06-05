@@ -13,7 +13,7 @@
 - `src/main.rs`: 默认 implementation agent prompt 和 TestReviewer prompt。
 - `tests/cli_flow.rs`: 默认 workspace 生成内容断言。
 - `README.md`: agent 测试失败处理规则。
-- `skills/codex-auto-dev-workflow/SKILL.md`: skill 中的 agent/reviewer 规则。
+- `skills/sandrone/SKILL.md`: skill 中的 agent/reviewer 规则。
 - `docs/proposals/2026-05-31/agent-baseline-failure-repair/`: 本次框架变更记录。
 
 ## 风险与兼容

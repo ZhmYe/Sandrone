@@ -7,7 +7,7 @@
 ## 实现前后对比
 
 - 实现前: `tick` 派发 agent 后立即返回；agent 完成后只写 exit code，必须等下一次 `tick` 才会刷新状态和执行 reviewer。
-- 实现后: wrapper 在 agent 退出时写 exit code，并把 `codex-auto-dev advance --request_id <REQ>` 的输出写入 `.codex-auto-dev/state/agents/<REQ>.hook.log`。heartbeat 仍保留，负责发现新 issue 和兜底恢复。
+- 实现后: wrapper 在 agent 退出时写 exit code，并把 `sandrone advance --request_id <REQ>` 的输出写入 `.sandrone/state/agents/<REQ>.hook.log`。heartbeat 仍保留，负责发现新 issue 和兜底恢复。
 
 ## 关键设计点
 
@@ -28,7 +28,7 @@ Rust 的 `spawn_issue_agent` 本来就有一层 shell wrapper 负责等待 `tool
 
 ### Per-request Lock
 
-`advance` 和 `tick` 刷新/派发 request 时都会尝试创建 `.codex-auto-dev/state/locks/<request_id>.lock/`。拿不到锁说明已有 hook 或 heartbeat 正在处理该 request，当前进程直接跳过。lock 写入 pid，发现 pid 已不存在时会清理 stale lock。
+`advance` 和 `tick` 刷新/派发 request 时都会尝试创建 `.sandrone/state/locks/<request_id>.lock/`。拿不到锁说明已有 hook 或 heartbeat 正在处理该 request，当前进程直接跳过。lock 写入 pid，发现 pid 已不存在时会清理 stale lock。
 
 ## 变更范围摘要
 

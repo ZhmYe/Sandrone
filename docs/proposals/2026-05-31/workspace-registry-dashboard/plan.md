@@ -4,7 +4,7 @@
 
 1. Registry
    - 增加 `WorkspaceRecord`。
-   - 增加 `CODEX_AUTO_DEV_HOME` 和默认 `~/.codex-auto-dev/workspaces.json` 解析。
+   - 增加 `SANDRONE_HOME` 和默认 `~/.sandrone/workspaces.json` 解析。
    - 实现 registry load/save/upsert/refresh。
    - 在 `new`、`upgrade`、`update`、`list`、`status` 中刷新当前 workspace。
 
@@ -22,15 +22,15 @@
    - review stage 提供多轮 attempt 和 reviewer detail 交互。
 
 4. CLI 别名
-   - 新增 `cad` bin，作为 `codex-auto-dev` 包装器。
+   - 新增 `sdr` bin，作为 `sandrone` 包装器。
 
 5. 文档与验证
    - 更新 README 和 skill。
-   - 增加集成测试覆盖 registry、dashboard JSON 和 `cad`。
+   - 增加集成测试覆盖 registry、dashboard JSON 和 `sdr`。
    - 运行 format、check、clippy、test、proposal 校验和 diff check。
 
 ## 兼容性
 
-- 旧 workspace 运行 `codex-auto-dev upgrade` 后会写入全局 registry。
-- `codex-auto-dev list` 仍只显示当前 workspace 的 request，不变成全局列表。
+- 旧 workspace 运行 `sandrone upgrade` 后会写入全局 registry。
+- `sandrone list` 仍只显示当前 workspace 的 request，不变成全局列表。
 - `dashboard` 可以从任意目录运行，只依赖全局 registry。

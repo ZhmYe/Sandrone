@@ -10,7 +10,7 @@
 
 ## 功能要求
 
-- 推荐初始化方式统一为 `codex-auto-dev new --url <repo-url>`。
+- 推荐初始化方式统一为 `sandrone new --url <repo-url>`。
 - 用户应先创建远端仓库；`new --name` 仅作为本地兼容/测试入口保留。
 - `new --url` clone 后判断仓库是否为空。
 - 空仓库跳过 CodeGraph，等待用户给需求。

@@ -140,6 +140,47 @@ export SANDRONE_ENV_FILE=/absolute/path/to/workspace/.env
 
 默认 reviewer connector 会为每次评审创建临时 `CODEX_HOME`：只复制 `auth.json`，并写入禁用插件和 hooks 的最小 `config.toml`。这样可以避免用户全局 Codex 插件缓存缺失、GitHub 限流或网络同步造成 reviewer `gate_unavailable=true`。只有明确设置 `SANDRONE_REVIEW_CODEX_HOME` 时，reviewer 才会使用你提供的完整 Codex home。
 
+默认 agent connector 会使用 `codex exec --ignore-user-config`，不继承用户个人 Codex 配置、skill 和插件。实现 agent 仍会收到 Sandrone phase prompt、CodeGraph/Obsidian 路径、review detail 路径和脚本能力；CodeGraph/Obsidian 推荐通过 workspace 文件与 CLI 使用，而不是依赖个人 Codex skill 自动加载。
+
+如果某个项目确实需要子 agent 继承个人 Codex skill/plugin，可以在 workspace `.env` 显式设置：
+
+```bash
+SANDRONE_AGENT_IGNORE_USER_CONFIG=0
+```
+
+关闭隔离后要特别注意上下文预算，避免 agent 读入完整 skill、插件说明、全部 review 历史或整座 Obsidian vault。
+
+### Agent / Reviewer 使用 Codex API provider
+
+默认 agent 和 reviewer backend 都是 `codex-cli`。如果希望某些无人值守环节用指定 API key/base URL/model，可以使用 `codex-api`。它仍然启动 Codex CLI，因此保留读文件、改代码、运行命令、sandbox 和结构化输出能力；默认使用 `approval_policy="never"`，不会要求人工审批：
+
+```bash
+SANDRONE_AGENT_BACKEND=codex-api
+SANDRONE_REVIEW_BACKEND=codex-api
+LLM_API_KEY=sk-...
+LLM_BASE_URL=https://api.openai.com/v1
+SANDRONE_AGENT_MODEL=gpt-5.5
+SANDRONE_REVIEWER_MODEL=gpt-5.5
+SANDRONE_CODEX_MODEL_PROVIDER=sandrone-api
+SANDRONE_CODEX_PROVIDER_NAME=Sandrone API
+SANDRONE_CODEX_WIRE_API=responses
+SANDRONE_REVIEW_TIMEOUT_SECONDS=1800
+```
+
+也可以按阶段/类型拆开配置，例如 `SANDRONE_PLAN_AGENT_BACKEND=codex-api`、`SANDRONE_IMPLEMENTATION_AGENT_BACKEND=codex-cli`、`SANDRONE_TEST_REVIEWER_BACKEND=codex-api`、`SANDRONE_DESIGN_REVIEWER_BACKEND=codex-cli`。模型同理可以用 `SANDRONE_PLAN_AGENT_MODEL`、`SANDRONE_IMPLEMENTATION_AGENT_MODEL`、`SANDRONE_TEST_REVIEWER_MODEL`、`SANDRONE_DESIGN_REVIEWER_MODEL` 等覆盖。
+
+支持的 backend 值：
+
+- `codex-cli`：默认，调用 Codex CLI。
+- `codex-api`：调用 Codex CLI，但临时配置 `model_provider`，让 Codex 使用 `LLM_API_KEY`、`LLM_BASE_URL` 和当前阶段解析出来的模型。默认 `wire_api=responses`，可用 `SANDRONE_CODEX_WIRE_API` 覆盖。
+- `claude-code`：保留值，默认脚本暂未实现；若设置会阻塞，不会绕过流程。
+
+默认脚本不再提供脚本直连 API 并代写文件/评审 JSON 的实现；需要其他 provider 时优先使用 `codex-api`，或替换 connector 脚本。API key 只允许放在未提交的 `.env` 或 shell 环境中，不要写入 plan/change-doc/review detail，也不要提交到目标仓库。
+
+默认 `codex-cli` 和 `codex-api` 都会自动给 Codex CLI 设置 `model_catalog_json`：优先使用 `SANDRONE_CODEX_MODEL_CATALOG_JSON`、`$CODEX_HOME/models_cache.json` 或 `$HOME/.codex/models_cache.json`，否则用 `codex debug models --bundled` 生成临时 catalog。这样 reviewer/agent 启动时不需要现场刷新模型列表，也可以避免兼容 provider 的 `/models` 返回 `{ "data": [...] }` 但 Codex 期待 `{ "models": [...] }` 时，在模型刷新阶段失败或长时间重试。
+
+若 key、模型、网络、base URL 或结构化输出失败，agent/reviewer 会阻塞流程而不是绕过门禁。
+
 ## 代理
 
 在运行 `sdr tick` 的同一个 shell 中设置代理即可。默认 agent/reviewer 脚本会继承环境变量。

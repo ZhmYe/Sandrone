@@ -6,16 +6,13 @@
 
 如果文件存在但无法读取，或者关键输入缺失到无法可靠评审，返回 `gate_unavailable: true`，不要猜测。
 
-- `$SANDRONE_ISSUE`
-- `$SANDRONE_PLAN`
-- `$SANDRONE_DECOMPOSITION` 和 `$SANDRONE_DAG`，如果这些文件存在或当前 request 是 slice
-- `$SANDRONE_CODEGRAPH_CONTEXT`
-- `$SANDRONE_OBSIDIAN_NOTE`
-- `$SANDRONE_TARGET_REPO`
-- `$SANDRONE_CHANGE_PATH`
-- `obsidian/codegraph/context.md`，如果存在
+- Review context 目录里的 `artifact-index.md`
+- artifact-index 中列出的 Plan、Request、Decomposition、DAG、CodeGraph、Obsidian note 和 Target repo 路径
+- artifact-index 中列出的 `changed-files.txt`、`diff-stat.txt`、`test-summary.txt`，如存在
 - `dev/repo/.codegraph` 是 CodeGraph MCP 索引目录；如果索引缺失但关键判断依赖仓库结构，必须在 process 或 finding 中说明风险
 - 目标项目 README、CONTRIBUTING、AGENTS、脚本和检查配置
+
+必须先读 artifact-index，不要在读取它之前扫描 workspace 或猜测路径。环境变量只是 connector 兼容接口，不是默认阅读清单。
 
 ## 审查流程
 
@@ -131,7 +128,7 @@ Finding 格式:
   "recommended_next_phase": "blocked",
   "summary": "关键输入不可读，无法可靠评审计划。",
   "process": ["尝试读取 request.md", "尝试读取 plan.md"],
-  "critical": [{"title": "plan.md 不可读取", "evidence": "$SANDRONE_PLAN 指向的文件不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或重新运行 sandrone plan 后再评审", "suggested_change": "确认 obsidian/changes/<change-name>/plan.md 存在且可读；缺失时重新运行 sandrone plan。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 plan.md。"}],
+  "critical": [{"title": "plan.md 不可读取", "evidence": "artifact-index 中的 Plan 路径不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或重新运行 sandrone plan 后再评审", "suggested_change": "确认 obsidian/changes/<change-name>/<request_id> plan.md 存在且可读；缺失时重新运行 sandrone plan。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 Plan 路径。"}],
   "high": [],
   "warning": [],
   "info": []

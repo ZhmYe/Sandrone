@@ -1,3 +1,15 @@
+---
+sandrone_schema: 1
+request_id: {{request_id}}
+document_type: decomposition
+agent_phase: decomposition
+agent_status: draft
+agent_ready_for_review: false
+format_check_status: not-applicable
+format_check_exit_code: ""
+updated_at: {{updated_at}}
+---
+
 # 需求拆解: {{title}}（{{request_id}}）
 
 需求路径: {{request_link}}

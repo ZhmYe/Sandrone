@@ -5,8 +5,10 @@
 ## 独立评审边界
 
 - 你必须独立重新评审，不得读取、引用或依赖其他 reviewer 的意见。
-- 只读取 `$SANDRONE_REVIEW_CONTEXT` 中的 request、plan、change-doc、status/status.json.gates，以及目标 worktree/目标仓库中与测试判断直接相关的文件。
-- 不得读取 `reviews/`、`$SANDRONE_REVIEW_FORBIDDEN_PATHS`、历史 `summary.json`、历史 detail JSON、当前轮其他 reviewer 输出或上一轮 reviewer 输出。
+- 先读取 Review context 目录里的 `artifact-index.md`。该文件是唯一入口，里面列出权威 plan、change-doc、worktree、自动摘要和禁止路径。
+- 不要在读取 artifact-index 之前扫描 workspace 或猜测路径。环境变量只是 connector 兼容接口，不是默认阅读清单。
+- 根据 artifact-index 中的 `changed-files.txt`、`diff-stat.txt`、`test-summary.txt` 和原始路径按需读取；再读取目标 worktree/目标仓库中与测试判断直接相关的文件。
+- 不得读取 `reviews/`、artifact-index 中的禁止路径、历史 `summary.json`、历史 detail JSON、当前轮其他 reviewer 输出或上一轮 reviewer 输出。
 - 不得把 implementation agent 在 journal 中记录的上一轮 reviewer finding 当作你的证据；证据必须来自需求、approved plan、change-doc、worktree diff、测试文件或命令输出。
 - 如果你发现自己必须依赖其他 reviewer 的结论才能判断，返回 `gate_unavailable: true` 并说明缺少哪类一手证据。
 
@@ -14,12 +16,10 @@
 
 如果 worktree、plan、change-doc 或关键测试配置不可读，且因此无法可靠判断测试充分性，返回 `gate_unavailable: true`。如果文件可读但测试不足，这是正常 review rejection，不是 gate unavailable。
 
-- `$SANDRONE_REVIEW_CONTEXT`
-- `$SANDRONE_ISSUE`
-- `$SANDRONE_PLAN`
-- `$SANDRONE_CHANGE_DOC`
-- `$SANDRONE_WORKTREE`
-- 目标项目测试目录、测试配置、pre-commit 配置和最近 git diff
+- Review context 目录里的 `artifact-index.md`
+- artifact-index 中列出的 `changed-files.txt`、`diff-stat.txt`、`test-summary.txt`
+- artifact-index 中列出的 Plan、Change doc、Worktree 和必要测试配置路径
+- 目标项目测试目录、测试配置、pre-commit 配置和相关 git diff。只读与测试判断直接相关的文件，不默认扫描全仓。
 
 ## 审查流程
 
@@ -130,7 +130,7 @@ Finding 格式:
   "recommended_next_phase": "blocked",
   "summary": "worktree 不可读取，无法审查测试覆盖。",
   "process": ["尝试读取 worktree", "尝试读取 change-doc"],
-  "critical": [{"title": "worktree 不可访问", "evidence": "$SANDRONE_WORKTREE 指向的目录不存在或不可读", "impact": "reviewer 无法检查实现和测试，继续审批会绕过实现门禁", "required_fix": "修复 worktree 或重新运行 sandrone start 后再评审", "suggested_change": "确认 dev/worktrees/<request_id> 存在；缺失时重新运行 sandrone start 或恢复 worktree。", "verification": "重新运行 code-review，确认 TestReviewer 能读取 worktree diff 和测试文件。"}],
+  "critical": [{"title": "worktree 不可访问", "evidence": "artifact-index 中的 Worktree 路径不存在或不可读", "impact": "reviewer 无法检查实现和测试，继续审批会绕过实现门禁", "required_fix": "修复 worktree 或重新运行 sandrone start 后再评审", "suggested_change": "确认 dev/worktrees/<request_id> 存在；缺失时重新运行 sandrone start 或恢复 worktree。", "verification": "重新运行 code-review，确认 TestReviewer 能读取 worktree diff 和测试文件。"}],
   "high": [],
   "warning": [],
   "info": []

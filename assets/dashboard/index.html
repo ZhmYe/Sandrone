@@ -272,6 +272,7 @@
     .status-pill.blocked { background: var(--red-soft); color: var(--red); }
     .status-pill.done { background: var(--green-soft); color: var(--green); }
     .status-pill.running { background: var(--blue-soft); color: var(--blue); }
+    .status-pill.waiting { background: var(--amber-soft); color: var(--amber); }
 	    .detail {
 	      min-height: 0;
 	      display: grid;
@@ -617,6 +618,37 @@
       gap: 10px;
       margin-top: 12px;
     }
+    .runtime-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .runtime-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 10px;
+    }
+    .runtime-card h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .runtime-card pre {
+      max-height: 260px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 8px 0 0;
+      padding: 10px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e5e7eb;
+      font-size: 11px;
+      line-height: 1.45;
+    }
     .finding {
       border-left: 4px solid var(--line-strong);
       background: #f8fafc;
@@ -626,6 +658,7 @@
     .finding.critical,
     .finding.high { border-left-color: var(--red); background: var(--red-soft); }
     .finding.warning { border-left-color: var(--amber); background: var(--amber-soft); }
+    .finding.waiting { border-left-color: var(--amber); background: var(--amber-soft); }
     .finding.info { border-left-color: var(--blue); background: var(--blue-soft); }
     .finding h4 { margin: 0 0 8px; font-size: 14px; }
     .finding p { margin: 4px 0; color: var(--text); font-size: 13px; line-height: 1.45; }
@@ -657,6 +690,7 @@
         max-height: min(68dvh, 680px);
       }
       .review-layout { grid-template-columns: 1fr; }
+      .runtime-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1156,7 +1190,7 @@
             ${stage.review_attempts.map((item, index) => `
               <button class="attempt ${index === state.attempt ? "active" : ""}" data-attempt="${index}">
                 <strong>Round ${item.attempt}</strong><br>
-                <span class="status-pill ${item.status === "approved" ? "done" : "blocked"}">${item.status}</span>
+                <span class="status-pill ${reviewStatusClass(item.status)}">${item.status}</span>
               </button>
             `).join("")}
           </div>
@@ -1165,7 +1199,7 @@
               ${attempt.reviewers.map((item, index) => `
                 <button class="reviewer ${index === state.reviewer ? "active" : ""}" data-reviewer="${index}">
                   <strong>${escapeHtml(item.reviewer)}</strong>
-                  <span class="status-pill ${item.approved ? "done" : "blocked"}">${escapeHtml(item.decision)}</span>
+                  <span class="status-pill ${reviewerStatusClass(item)}">${escapeHtml(reviewerDisplayStatus(item))}</span>
                   <div class="project-path">${escapeHtml(item.detail_path)}</div>
                 </button>
               `).join("")}
@@ -1198,8 +1232,9 @@
         .flatMap(kind => (reviewer[kind] || []).map(item => ({ kind, item })));
       return `
         <div class="finding-grid">
-          <div class="finding ${reviewer.approved ? "info" : "high"}">
+          <div class="finding ${reviewerSummaryClass(reviewer)}">
             <h4>${escapeHtml(reviewer.reviewer)} · ${escapeHtml(reviewer.decision)}</h4>
+            <p><strong>Runtime:</strong> ${escapeHtml(reviewer.runtime_status || "detail-written")} ${reviewer.pid ? `(pid ${escapeHtml(reviewer.pid)})` : ""} ${reviewer.exit_code ? `(exit ${escapeHtml(reviewer.exit_code)})` : ""}</p>
             <p><strong>Next:</strong> ${escapeHtml(reviewer.recommended_next_phase)}</p>
             <p><strong>Summary:</strong> ${escapeHtml(reviewer.summary || "无")}</p>
           </div>
@@ -1217,8 +1252,66 @@
             <div class="artifact-path">原始 reviewer JSON</div>
             <div class="json-viewer" data-json-detail></div>
           </div>
+          ${renderRuntimeLogs(reviewer)}
         </div>
       `;
+    }
+
+    function renderRuntimeLogs(reviewer) {
+      const logs = [
+        ["runtime", reviewer.runtime_path, reviewer.runtime_tail],
+        ["events", reviewer.events_log_path, reviewer.events_log_tail],
+        ["stdout", reviewer.stdout_path, reviewer.stdout_tail],
+        ["stderr", reviewer.stderr_path, reviewer.stderr_tail],
+        ["hook", reviewer.hook_log_path, reviewer.hook_log_tail]
+      ].filter(([, path, tail]) => path || tail);
+      if (!logs.length) return "";
+      return `
+        <div class="runtime-grid">
+          ${logs.map(([label, path, tail]) => `
+            <div class="runtime-card">
+              <h4>${escapeHtml(label)}</h4>
+              <div class="project-path">${escapeHtml(path || "暂无路径")}</div>
+              <pre>${escapeHtml(tail || "暂无输出")}</pre>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function reviewStatusClass(status) {
+      if (status === "approved") return "done";
+      if (status === "running" || status === "pending") return "waiting";
+      return "blocked";
+    }
+
+    function reviewerStatusClass(reviewer) {
+      const status = reviewerDisplayStatus(reviewer);
+      if (status === "approved") return "done";
+      if (reviewerIsWaiting(reviewer)) return "waiting";
+      return "blocked";
+    }
+
+    function reviewerSummaryClass(reviewer) {
+      if (reviewerIsWaiting(reviewer)) return "waiting";
+      return reviewer.approved ? "info" : "high";
+    }
+
+    function reviewerIsWaiting(reviewer) {
+      if (reviewerHasDetail(reviewer)) return false;
+      return ["running", "pending", "exited", "stale", ""].includes(reviewer.runtime_status || "");
+    }
+
+    function reviewerDisplayStatus(reviewer) {
+      if (reviewerHasDetail(reviewer)) {
+        if (reviewer.decision) return reviewer.decision;
+        return reviewer.approved ? "approved" : "rejected";
+      }
+      return reviewer.runtime_status || reviewer.decision || "pending";
+    }
+
+    function reviewerHasDetail(reviewer) {
+      return Boolean((reviewer.detail || "").trim());
     }
 
     function renderMarkdownContent(content) {

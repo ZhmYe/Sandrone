@@ -6,6 +6,7 @@
 | --- | --- |
 | `src/main.rs` | CLI 命令分发、tick/agent 编排和流程胶水。 |
 | `src/state.rs` | `requests.tsv`、`sessions.json`、`status.json`、gate 和事件流读写。 |
+| `src/doc_status.rs` | 阶段 Markdown frontmatter、文档提交状态、format/check 摘要、gate 状态和旧状态迁移。 |
 | `src/codegraph.rs` | CodeGraph CLI 检查、索引初始化和 context 生成。 |
 | `src/obsidian.rs` | Obsidian vault、导航笔记、derived JSON、Base、Canvas。 |
 | `src/review_gate.rs` | reviewer gate 执行、JSON 规范化和结果写入。 |
@@ -36,6 +37,8 @@ docs/proposals/YYYY-MM-DD/<proposal-id>/
 ```
 
 这些是本框架仓库的开发治理文件，不会复制到用户的 runtime workspace。用户 workspace 的运行时文档在 `obsidian/changes/`。
+
+`docs/proposals/` 是历史归档，不是当前运行规范。旧 proposal 可能仍记录当时的 `approval JSON`、`status.json.gates` 或旧文档目录设计；实现、prompt 和用户操作以 README、`docs/workflow.md`、`docs/workspace-layout.md`、`templates/prompts/` 和 `skills/sandrone/SKILL.md` 为准。
 
 项目 constitution 入口见 [constitution.md](constitution.md)。
 

@@ -96,6 +96,14 @@ reviews/integration-review/details/*.json
 
 多轮 review 按 `001-*`、`002-*` 分组展示。`summary.json` 只代表最新汇总，可能被覆盖，因此不作为详情展示的唯一来源。
 
+异步 reviewer 运行中时，detail JSON 可能还没有生成。Dashboard 会额外读取 worker 状态和日志：
+
+```text
+.sandrone/state/jobs/<REQ>/<stage>/<attempt>/<reviewer>/
+```
+
+在 Review 结果中可以看到 `running` / `exited`、pid、`runtime.json`、`events.log`、stdout、stderr 和 hook log 的尾部内容，用来判断 reviewer 是没有派发、已经启动、仍在分析、已经退出、还是卡在后端/模型/命令输出上。旧 workspace 的 `.sandrone/state/reviews/` 会作为兼容兜底读取。
+
 ## API
 
 | 路径 | 说明 |

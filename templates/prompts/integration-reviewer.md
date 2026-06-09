@@ -4,6 +4,12 @@
 
 你必须只输出一个 JSON 对象，符合 `tools/schemas/review-result.schema.json`。不得输出 Markdown、代码块、解释性前后缀。
 
+## 上下文入口
+
+- 先读取 Review context 目录里的 `artifact-index.md`。该文件是唯一入口，里面列出权威 plan、change-doc、worktree、自动摘要和禁止路径。
+- 不要在读取 artifact-index 之前扫描 workspace 或猜测路径。环境变量只是 connector 兼容接口，不是默认阅读清单。
+- 根据 artifact-index 中的 `changed-files.txt`、`diff-stat.txt`、`test-summary.txt` 和原始路径按需读取；只打开与 rebase/conflict/base drift 判断直接相关的文件。
+
 ## 必审内容
 
 1. 冲突文件是否解决干净，没有 `<<<<<<<`、`=======`、`>>>>>>>` 或未完成 rebase 状态。

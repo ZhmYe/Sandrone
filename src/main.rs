@@ -3,7 +3,9 @@ mod codegraph;
 mod dashboard;
 mod defaults;
 mod delivery;
+mod doc_status;
 mod doctor;
+mod jobs;
 mod obsidian;
 mod registry;
 mod review_gate;
@@ -14,10 +16,13 @@ mod utils;
 pub(crate) use codegraph::*;
 pub(crate) use defaults::*;
 pub(crate) use delivery::deliver_finished_request;
+pub(crate) use doc_status::*;
 pub(crate) use doctor::doctor;
+pub(crate) use jobs::*;
 pub(crate) use obsidian::*;
 pub(crate) use review_gate::{
-    code_review, decomposition_review, integration_review, plan_review, review_diagnostic_excerpt,
+    code_review, decomposition_review, integration_review, plan_review, refresh_review_stage,
+    review_diagnostic_excerpt, review_worker,
 };
 pub(crate) use slices::*;
 pub(crate) use state::*;
@@ -31,7 +36,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -324,6 +329,7 @@ fn run() -> Result<()> {
         "tick" => tick(&args),
         "advance" => advance_request(&args),
         "doctor" => doctor(&args),
+        "doc-status" => show_doc_status(&args),
         "obsidian-refresh" => refresh_obsidian_command(&args),
         "plan" => create_plan_packet(&args),
         "decompose" => create_decomposition_packet(&args),
@@ -335,6 +341,7 @@ fn run() -> Result<()> {
         "decomposition-review" => decomposition_review(&args),
         "code-review" => code_review(&args),
         "integration-review" => integration_review(&args),
+        "__review-worker" => review_worker(&args),
         "start" => start_worktree(&args),
         "finish" => finish_request(&args),
         "pr-status" => pr_status_request(&args),
@@ -634,7 +641,7 @@ fn tick(args: &[String]) -> Result<()> {
     }
 
     let requests = load_requests()?;
-    let mut request_ids = select_tick_requests(&requests, request_id.as_deref())?;
+    let request_ids = select_tick_requests(&requests, request_id.as_deref())?;
     if request_ids.is_empty() {
         println!("Tick complete: no pending request.");
         return Ok(());
@@ -647,8 +654,8 @@ fn tick(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let available_slots = parallel_limit - running_count;
-    let delayed_by_limit = request_ids.len().saturating_sub(available_slots);
-    request_ids.truncate(available_slots);
+    let mut remaining_slots = available_slots;
+    let mut delayed_by_limit = 0usize;
 
     if !Path::new(ISSUE_AGENT_TOOL).exists() {
         return Err(format!("{ISSUE_AGENT_TOOL} does not exist").into());
@@ -658,11 +665,26 @@ fn tick(args: &[String]) -> Result<()> {
     let mut dispatched = Vec::new();
     let mut failures = Vec::new();
     for request_id in request_ids {
+        if remaining_slots == 0 {
+            delayed_by_limit += 1;
+            continue;
+        }
         let Some(_lock) = RequestLock::acquire(&request_id)? else {
             continue;
         };
-        match dispatch_next_agent_for_request(&request_id, max_attempts, &mut preflight) {
-            Ok(Some((request, phase, pid))) => dispatched.push((request, phase, pid)),
+        let outcome =
+            match dispatch_next_slice_for_parent(&request_id, max_attempts, &mut preflight) {
+                Ok(Some(dispatched)) => Ok(Some(dispatched)),
+                Ok(None) => {
+                    dispatch_next_agent_for_request(&request_id, max_attempts, &mut preflight)
+                }
+                Err(error) => Err(error),
+            };
+        match outcome {
+            Ok(Some((request, phase, pid))) => {
+                dispatched.push((request, phase, pid));
+                remaining_slots = remaining_slots.saturating_sub(1);
+            }
             Ok(None) => {}
             Err(error) => {
                 failures.push(format!("{request_id}: {error}"));
@@ -841,6 +863,48 @@ fn refresh_obsidian_command(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn show_doc_status(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id", "--phase"])?;
+    let request_id = required_request_id(args)?;
+    let requests = load_requests()?;
+    let request = requests
+        .iter()
+        .find(|request| request.request_id == request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let phase = match flag_value(args, "--phase")?.as_deref() {
+        Some("decomposition") => AgentPhase::Decomposition,
+        Some("planning") | Some("plan") => AgentPhase::Planning,
+        Some("implementation") | Some("impl") => AgentPhase::Implementation,
+        Some("rebase") => AgentPhase::Rebase,
+        Some(other) => {
+            return Err(format!(
+                "unsupported phase `{other}`. Use decomposition, planning, implementation, or rebase."
+            )
+            .into());
+        }
+        None => inferred_document_phase(request),
+    };
+    print!("{}", render_doc_status(request, phase)?);
+    Ok(())
+}
+
+fn inferred_document_phase(request: &Request) -> AgentPhase {
+    match canonical_status(&request.status) {
+        "decomposition"
+        | "decomposition-agent-running"
+        | "decomposition-submitted"
+        | "decomposition-review-rejected" => AgentPhase::Decomposition,
+        "planning" | "planning-agent-running" | "plan-submitted" | "plan-review-rejected" => {
+            AgentPhase::Planning
+        }
+        "rebase-agent-running" | "integration-review-submitted" | "integration-review-rejected" => {
+            AgentPhase::Rebase
+        }
+        _ => AgentPhase::Implementation,
+    }
+}
+
 fn create_decomposition_packet(args: &[String]) -> Result<()> {
     ensure_initialized()?;
     ensure_allowed_flags(args, &["--name", "--request_id", "--request-id"])?;
@@ -984,6 +1048,7 @@ fn submit_approval(args: &[String]) -> Result<()> {
     ensure_change_packet(&request)?;
     request.status = format!("{}-submitted", gate_status_prefix(&gate));
     request.updated_at = now_string();
+    mark_phase_document_submitted(&request, gate_agent_phase(&gate))?;
     write_approval_record(&request, &gate, "submitted", "", "manual-cli", "")?;
     requests[index] = request.clone();
     save_requests(&requests)?;
@@ -1091,6 +1156,14 @@ fn show_gates(args: &[String]) -> Result<()> {
 }
 
 fn start_worktree(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
+    let request_id = required_request_id(args)?;
+    let _lock = acquire_request_lock_wait(&request_id, "start")?;
+    start_worktree_inner(args)
+}
+
+fn start_worktree_inner(args: &[String]) -> Result<()> {
     ensure_initialized()?;
     ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
     let request_id = required_request_id(args)?;
@@ -1894,42 +1967,26 @@ fn resume_request(args: &[String]) -> Result<()> {
     let mut request = requests[index].clone();
     ensure_change_packet(&request)?;
     let resumed_phase = if request.status == "blocked" {
-        let blocked_stage = fs::read_to_string(Path::new(&request.change_path).join("status.json"))
-            .ok()
-            .and_then(|content| json_value(&content, "stage"));
-        let phase = if blocked_stage.as_deref() == Some("decomposition") {
-            AgentPhase::Decomposition
-        } else if blocked_stage.as_deref() == Some("rebase") {
-            AgentPhase::Rebase
-        } else if existing_or_preferred_request_artifact_path(&request, "decomposition.md").exists()
-            && ensure_gate_approved(&request, "decomposition").is_err()
-        {
-            AgentPhase::Decomposition
-        } else if ensure_gate_approved(&request, "plan").is_ok() {
-            AgentPhase::Implementation
-        } else {
-            AgentPhase::Planning
-        };
-        let status = match phase {
-            AgentPhase::Decomposition => "decomposition-review-rejected",
-            AgentPhase::Planning => "planning",
-            AgentPhase::Implementation => "in-progress",
-            AgentPhase::Rebase => "integration-review-rejected",
-        };
-        request.status = status.to_string();
+        let target = blocked_resume_target(&request)?;
+        request.status = target.status.to_string();
         request.updated_at = now_string();
         requests[index] = request.clone();
         save_requests(&requests)?;
-        write_status_json(&request, phase.as_str(), status, "resumed from blocked")?;
+        write_status_json(
+            &request,
+            target.phase.as_str(),
+            target.status,
+            &target.reason,
+        )?;
         append_event(
             "request_resumed",
             &request.request_id,
-            phase.as_str(),
-            status,
-            "resumed from blocked by user",
+            target.phase.as_str(),
+            target.status,
+            &target.reason,
         )?;
-        upsert_session_for_request(&request, phase.as_str(), status)?;
-        Some((phase, status.to_string()))
+        upsert_session_for_request(&request, target.phase.as_str(), target.status)?;
+        Some((target.phase, target.status.to_string()))
     } else {
         None
     };
@@ -2080,6 +2137,145 @@ fn list_sessions(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct ResumeTarget {
+    phase: AgentPhase,
+    status: &'static str,
+    reason: String,
+}
+
+fn blocked_resume_target(request: &Request) -> Result<ResumeTarget> {
+    let status_content =
+        fs::read_to_string(Path::new(&request.change_path).join("status.json")).unwrap_or_default();
+    let blocked_stage = json_value(&status_content, "stage").unwrap_or_default();
+    let blocked_reason = json_value(&status_content, "reason").unwrap_or_default();
+    let phase = blocked_stage_to_agent_phase(request, &blocked_stage);
+
+    if phase == AgentPhase::Implementation && ensure_gate_approved(request, "plan").is_err() {
+        return Ok(ResumeTarget {
+            phase: AgentPhase::Planning,
+            status: "planning",
+            reason: "resumed from blocked; plan gate is not approved, returning to planning"
+                .to_string(),
+        });
+    }
+    if phase == AgentPhase::Rebase && ensure_gate_approved(request, "change-doc").is_err() {
+        return Ok(ResumeTarget {
+            phase: AgentPhase::Implementation,
+            status: "code-review-rejected",
+            reason:
+                "resumed from blocked; change-doc gate is not approved, returning to implementation"
+                    .to_string(),
+        });
+    }
+
+    if blocked_came_from_review_gate_unavailable(request, phase, &blocked_reason) {
+        let status = submitted_status_for_phase(phase);
+        return Ok(ResumeTarget {
+            phase,
+            status,
+            reason: format!(
+                "resumed from blocked; reviewer gate was unavailable, rerunning {}",
+                review_stage_for_phase(phase)
+            ),
+        });
+    }
+
+    if blocked_stage == "blocked" || blocked_stage.is_empty() {
+        return fallback_resume_target(request);
+    }
+
+    Ok(ResumeTarget {
+        phase,
+        status: rejected_status_for_phase(phase),
+        reason: format!(
+            "resumed from blocked; previous block requires {}",
+            phase.as_str()
+        ),
+    })
+}
+
+fn fallback_resume_target(request: &Request) -> Result<ResumeTarget> {
+    if is_parent_request(request) && ensure_gate_approved(request, "decomposition").is_err() {
+        return Ok(ResumeTarget {
+            phase: AgentPhase::Planning,
+            status: "planning",
+            reason: "resumed from blocked; decomposition gate is not approved".to_string(),
+        });
+    }
+    if ensure_gate_approved(request, "plan").is_ok() {
+        Ok(ResumeTarget {
+            phase: AgentPhase::Implementation,
+            status: "code-review-rejected",
+            reason: "resumed from blocked; implementation must be repaired or resubmitted"
+                .to_string(),
+        })
+    } else {
+        Ok(ResumeTarget {
+            phase: AgentPhase::Planning,
+            status: "planning",
+            reason: "resumed from blocked; plan gate is not approved".to_string(),
+        })
+    }
+}
+
+fn blocked_stage_to_agent_phase(request: &Request, stage: &str) -> AgentPhase {
+    match stage {
+        "decomposition" | "decomposition-review" => AgentPhase::Decomposition,
+        "planning" | "plan-review" => AgentPhase::Planning,
+        "rebase" | "integration-review" => AgentPhase::Rebase,
+        "implementation" | "code-review" | "agent" => AgentPhase::Implementation,
+        _ if is_parent_request(request) => AgentPhase::Decomposition,
+        _ if ensure_gate_approved(request, "plan").is_ok() => AgentPhase::Implementation,
+        _ => AgentPhase::Planning,
+    }
+}
+
+fn blocked_came_from_review_gate_unavailable(
+    request: &Request,
+    phase: AgentPhase,
+    blocked_reason: &str,
+) -> bool {
+    let reason = blocked_reason.to_lowercase();
+    if reason.contains("gate unavailable") || reason.contains("reviewer backend") {
+        return true;
+    }
+    let summary_path = Path::new(&request.change_path)
+        .join("reviews")
+        .join(review_stage_for_phase(phase))
+        .join("summary.json");
+    fs::read_to_string(summary_path)
+        .map(|content| json_bool(&content, "gate_unavailable").unwrap_or(false))
+        .unwrap_or(false)
+}
+
+fn submitted_status_for_phase(phase: AgentPhase) -> &'static str {
+    match phase {
+        AgentPhase::Decomposition => "decomposition-submitted",
+        AgentPhase::Planning => "plan-submitted",
+        AgentPhase::Implementation => "change-doc-submitted",
+        AgentPhase::Rebase => "integration-review-submitted",
+    }
+}
+
+fn rejected_status_for_phase(phase: AgentPhase) -> &'static str {
+    match phase {
+        AgentPhase::Decomposition => "decomposition-review-rejected",
+        AgentPhase::Planning => "plan-review-rejected",
+        AgentPhase::Implementation => "code-review-rejected",
+        AgentPhase::Rebase => "integration-review-rejected",
+    }
+}
+
+fn review_stage_for_phase(phase: AgentPhase) -> &'static str {
+    match phase {
+        AgentPhase::Decomposition => "decomposition-review",
+        AgentPhase::Planning => "plan-review",
+        AgentPhase::Implementation => "code-review",
+        AgentPhase::Rebase => "integration-review",
+    }
+}
+
 fn upgrade_workspace(args: &[String]) -> Result<()> {
     ensure_initialized()?;
     ensure_allowed_flags(args, &["--dry-run", "--default"])?;
@@ -2158,6 +2354,8 @@ fn upgrade_workspace(args: &[String]) -> Result<()> {
         save_requests(&requests)?;
     }
 
+    remove_legacy_agent_success_markers(dry_run)?;
+
     for request in &requests {
         if request.change_path.is_empty() {
             continue;
@@ -2166,11 +2364,16 @@ fn upgrade_workspace(args: &[String]) -> Result<()> {
             remove_legacy_approvals_dir(request, true)?;
         } else {
             migrate_legacy_approval_records(request)?;
+            normalize_legacy_gate_records(request, false)?;
             remove_legacy_approvals_dir(request, false)?;
         }
 
         upgrade_change_artifacts(request, dry_run)?;
-        normalize_legacy_gate_records(request, dry_run)?;
+        migrate_request_document_status(request, dry_run)?;
+        remove_obsolete_format_check_record(request, dry_run)?;
+        if dry_run {
+            normalize_legacy_gate_records(request, true)?;
+        }
 
         if !dry_run {
             upsert_session_for_request(request, "planning", "handoff-ready")?;
@@ -2317,9 +2520,13 @@ fn is_agent_running_status(status: &str) -> bool {
         status,
         "agent-running"
             | "decomposition-agent-running"
+            | "decomposition-review-running"
             | "planning-agent-running"
+            | "plan-review-running"
             | "implementation-agent-running"
+            | "code-review-running"
             | "rebase-agent-running"
+            | "integration-review-running"
     )
 }
 
@@ -2419,6 +2626,7 @@ fn status_progress_rank(status: &str) -> Option<u8> {
         "decomposition" => Some(5),
         "decomposition-agent-running" => Some(8),
         "decomposition-submitted" => Some(10),
+        "decomposition-review-running" => Some(11),
         "decomposition-review-rejected" => Some(12),
         "decomposition-approved" => Some(15),
         STATUS_SLICES_READY => Some(16),
@@ -2426,15 +2634,18 @@ fn status_progress_rank(status: &str) -> Option<u8> {
         "planning" => Some(20),
         "planning-agent-running" | "agent-running" => Some(30),
         "plan-submitted" => Some(40),
+        "plan-review-running" => Some(42),
         "plan-review-rejected" => Some(45),
         "plan-approved" => Some(50),
         "in-progress" => Some(55),
         "implementation-agent-running" => Some(60),
         "change-doc-submitted" => Some(70),
+        "code-review-running" => Some(72),
         "code-review-rejected" => Some(75),
         "change-doc-approved" => Some(80),
         STATUS_SLICE_FINISHED => Some(81),
         "integration-review-submitted" => Some(82),
+        "integration-review-running" => Some(83),
         "integration-review-rejected" => Some(84),
         "rebase-agent-running" => Some(86),
         STATUS_WAIT_UPDATE_PR => Some(90),
@@ -2470,6 +2681,17 @@ impl RequestLock {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+fn acquire_request_lock_wait(request_id: &str, operation: &str) -> Result<RequestLock> {
+    const ATTEMPTS: usize = 200;
+    for _ in 0..ATTEMPTS {
+        if let Some(lock) = RequestLock::acquire(request_id)? {
+            return Ok(lock);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!("{operation} could not acquire request lock for {request_id}").into())
 }
 
 impl Drop for RequestLock {
@@ -2577,13 +2799,21 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
 
     match request.status.as_str() {
         "decomposition-submitted" => run_decomposition_review_from_tick(&request.request_id),
+        "decomposition-review-running" => {
+            refresh_review_stage(&request.request_id, "decomposition-review")
+        }
         "decomposition-agent-running" => refresh_agent_phase(&request, AgentPhase::Decomposition),
         "plan-submitted" => run_plan_review_from_tick(&request.request_id),
+        "plan-review-running" => refresh_review_stage(&request.request_id, "plan-review"),
         "change-doc-submitted" => run_code_review_from_tick(&request.request_id),
+        "code-review-running" => refresh_review_stage(&request.request_id, "code-review"),
         "planning-agent-running" => refresh_agent_phase(&request, AgentPhase::Planning),
         "implementation-agent-running" => refresh_agent_phase(&request, AgentPhase::Implementation),
         "rebase-agent-running" => refresh_agent_phase(&request, AgentPhase::Rebase),
         "integration-review-submitted" => run_integration_review_from_tick(&request.request_id),
+        "integration-review-running" => {
+            refresh_review_stage(&request.request_id, "integration-review")
+        }
         "agent-running" => refresh_legacy_agent_status(&request),
         _ => Ok(false),
     }
@@ -2663,7 +2893,7 @@ fn dispatch_next_agent_for_request(
         return Ok(None);
     }
     if phase == AgentPhase::Implementation && request.worktree_path.trim().is_empty() {
-        start_worktree(&["--request_id".to_string(), request.request_id.clone()])?;
+        start_worktree_inner(&["--request_id".to_string(), request.request_id.clone()])?;
         requests = load_requests()?;
         index = find_request_index(&requests, request_id)
             .ok_or_else(|| format!("selected request disappeared after start: {request_id}"))?;
@@ -2747,10 +2977,29 @@ fn next_agent_phase(request: &Request) -> Result<Option<AgentPhase>> {
         || is_agent_running_status(&request.status)
         || matches!(
             request.status.as_str(),
-            "decomposition-submitted" | "plan-submitted" | "change-doc-submitted"
+            "decomposition-submitted"
+                | "decomposition-review-running"
+                | "plan-submitted"
+                | "plan-review-running"
+                | "change-doc-submitted"
+                | "code-review-running"
+                | "integration-review-submitted"
+                | "integration-review-running"
         )
     {
         return Ok(None);
+    }
+    if request.status == "plan-review-rejected" {
+        return Ok(Some(AgentPhase::Planning));
+    }
+    if request.status == "integration-review-rejected" {
+        return Ok(Some(AgentPhase::Rebase));
+    }
+    if ensure_gate_approved(request, "plan").is_ok() {
+        if ensure_gate_approved(request, "change-doc").is_ok() {
+            return Ok(None);
+        }
+        return Ok(Some(AgentPhase::Implementation));
     }
     if is_parent_request(request) {
         if request.status == "decomposition-review-rejected" {
@@ -2760,12 +3009,6 @@ fn next_agent_phase(request: &Request) -> Result<Option<AgentPhase>> {
             return Ok(Some(AgentPhase::Decomposition));
         }
         return Ok(None);
-    }
-    if request.status == "plan-review-rejected" {
-        return Ok(Some(AgentPhase::Planning));
-    }
-    if request.status == "integration-review-rejected" {
-        return Ok(Some(AgentPhase::Rebase));
     }
     if ensure_gate_approved(request, "plan").is_err() {
         return Ok(Some(AgentPhase::Planning));
@@ -2830,14 +3073,24 @@ fn refresh_agent_phase(request: &Request, phase: AgentPhase) -> Result<bool> {
         return refresh_missing_agent_exit(request, phase.as_str());
     };
     if exit_code != "0" {
-        let reason = format!(
-            "{} agent exited with code {exit_code}. See {} and {}",
-            phase.as_str(),
-            agent_stdout_path(&request.request_id).display(),
-            agent_stderr_path(&request.request_id).display()
-        );
-        block_request_by_id(&request.request_id, phase.as_str(), &reason)?;
-        return Ok(true);
+        if let Some(artifact) = agent_document_status_is_submitted(request, phase)? {
+            append_event(
+                "agent_document_status_used",
+                &request.request_id,
+                phase.as_str(),
+                &request.status,
+                &format!("exit_code={exit_code}; artifact={}", artifact.display()),
+            )?;
+        } else {
+            let reason = format!(
+                "{} agent exited with code {exit_code}. See {} and {}",
+                phase.as_str(),
+                agent_stdout_path(&request.request_id).display(),
+                agent_stderr_path(&request.request_id).display()
+            );
+            block_request_by_id(&request.request_id, phase.as_str(), &reason)?;
+            return Ok(true);
+        }
     }
 
     match phase {
@@ -2931,6 +3184,7 @@ fn submit_gate_from_tick(request_id: &str, gate: &str) -> Result<()> {
     ensure_change_packet(&request)?;
     request.status = format!("{}-submitted", gate_status_prefix(gate));
     request.updated_at = now_string();
+    mark_phase_document_submitted(&request, gate_agent_phase(gate))?;
     write_approval_record(
         &request,
         gate,
@@ -2965,6 +3219,15 @@ fn submit_gate_from_tick(request_id: &str, gate: &str) -> Result<()> {
     update_gate_session(&request, gate, "waiting-review")
 }
 
+fn gate_agent_phase(gate: &str) -> AgentPhase {
+    match gate {
+        "decomposition" => AgentPhase::Decomposition,
+        "plan" => AgentPhase::Planning,
+        "change-doc" => AgentPhase::Implementation,
+        _ => AgentPhase::Implementation,
+    }
+}
+
 fn run_decomposition_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match decomposition_review(&args) {
@@ -2977,10 +3240,7 @@ fn run_decomposition_review_from_tick(request_id: &str) -> Result<bool> {
 fn run_plan_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match plan_review(&args) {
-        Ok(()) => {
-            start_worktree(&args)?;
-            Ok(true)
-        }
+        Ok(()) => Ok(true),
         Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
         Err(error) => Err(error),
     }
@@ -2989,22 +3249,7 @@ fn run_plan_review_from_tick(request_id: &str) -> Result<bool> {
 fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match code_review(&args) {
-        Ok(()) => {
-            let requests = load_requests()?;
-            let request = requests
-                .iter()
-                .find(|request| request.request_id == request_id)
-                .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
-            if is_slice_request(request) {
-                mark_slice_finished_by_id(request_id, "code-review approved; slice finished")?;
-            } else {
-                mark_wait_update_pr_by_id(
-                    request_id,
-                    "code-review approved; waiting for PR creation or update",
-                )?;
-            }
-            Ok(true)
-        }
+        Ok(()) => Ok(true),
         Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
         Err(error) => Err(error),
     }
@@ -3013,13 +3258,7 @@ fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
 fn run_integration_review_from_tick(request_id: &str) -> Result<bool> {
     let args = vec!["--request_id".to_string(), request_id.to_string()];
     match integration_review(&args) {
-        Ok(()) => {
-            mark_wait_update_pr_by_id(
-                request_id,
-                "integration-review approved; waiting for PR branch update",
-            )?;
-            Ok(true)
-        }
+        Ok(()) => Ok(true),
         Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
         Err(error) => Err(error),
     }
@@ -3258,32 +3497,146 @@ fn spawn_issue_agent(request: &Request, max_attempts: u32, phase: AgentPhase) ->
     if !Path::new(tool_path).exists() {
         return Err(format!("{tool_path} does not exist").into());
     }
-    fs::create_dir_all(agent_state_dir())?;
-    let stdout = fs::File::create(agent_stdout_path(&request.request_id))?;
-    let stderr = fs::File::create(agent_stderr_path(&request.request_id))?;
+    fs::create_dir_all(agent_job_state_dir(&request.request_id))?;
+    let stdout = create_truncated_runtime_file(
+        agent_stdout_path(&request.request_id),
+        Some(&legacy_agent_stdout_path(&request.request_id)),
+    )?;
+    let stderr = create_truncated_runtime_file(
+        agent_stderr_path(&request.request_id),
+        Some(&legacy_agent_stderr_path(&request.request_id)),
+    )?;
     let exit_path = agent_exit_path(&request.request_id);
+    let legacy_exit_path = legacy_agent_exit_path(&request.request_id);
     let hook_log_path = agent_hook_log_path(&request.request_id);
+    let legacy_hook_log_path = legacy_agent_hook_log_path(&request.request_id);
+    let events_log_path = agent_events_log_path(&request.request_id);
+    drop(create_truncated_runtime_file(
+        &hook_log_path,
+        Some(&legacy_hook_log_path),
+    )?);
+    drop(create_truncated_runtime_file(&events_log_path, None)?);
     if exit_path.exists() {
-        fs::remove_file(&exit_path)?;
+        remove_runtime_file(&exit_path, Some(&legacy_exit_path))?;
     }
+    let wrapper_script = r#"tool=$1
+exit_path=$2
+legacy_exit_path=$3
+hook_log=$4
+runtime_log=$5
+
+resolve_sandrone_bin() {
+  if [ -n "${SANDRONE_BIN:-}" ]; then
+    case "$(basename "$SANDRONE_BIN")" in
+      codex-auto-dev) ;;
+      *)
+        if [ -x "$SANDRONE_BIN" ]; then
+          printf '%s\n' "$SANDRONE_BIN"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  if command -v sandrone >/dev/null 2>&1; then
+    command -v sandrone
+    return 0
+  fi
+  if command -v sdr >/dev/null 2>&1; then
+    command -v sdr
+    return 0
+  fi
+  return 1
+}
+
+write_runtime_event() {
+  event=$1
+  detail=${2:-}
+  printf '%s\t%s\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$event" "$detail" >> "$runtime_log" 2>/dev/null || true
+}
+
+run_hook() {
+  code=$1
+  if [ -n "${SANDRONE_REQUEST_ID:-}" ]; then
+    if sandrone_bin=$(resolve_sandrone_bin); then
+      "$sandrone_bin" advance --request_id "$SANDRONE_REQUEST_ID" --max-attempts "$SANDRONE_MAX_ATTEMPTS" >> "$hook_log" 2>&1 || true
+    else
+      printf 'Sandrone-agent-wrapper: sandrone CLI not found; skip advance hook\n' >> "$hook_log"
+    fi
+  fi
+}
+
+write_exit() {
+  code=$1
+  printf '%s\n' "$code" > "$exit_path"
+  [ -n "$legacy_exit_path" ] && printf '%s\n' "$code" > "$legacy_exit_path"
+  write_runtime_event wrapper-exited "exit=$code"
+  run_hook "$code"
+  exit "$code"
+}
+
+trap 'write_exit 129' HUP
+trap 'write_exit 130' INT
+trap 'write_exit 143' TERM
+write_runtime_event wrapper-started "tool=$tool"
+write_runtime_event tool-started "tool=$tool"
+sh "$tool"
+code=$?
+write_runtime_event tool-exited "exit=$code"
+write_exit "$code"
+"#;
     let mut command = Command::new("sh");
     command
         .arg("-c")
-        .arg("tool=$1; exit_path=$2; hook_log=$3; run_hook() { code=$1; if [ -n \"${SANDRONE_BIN:-}\" ] && [ -n \"${SANDRONE_REQUEST_ID:-}\" ]; then \"$SANDRONE_BIN\" advance --request_id \"$SANDRONE_REQUEST_ID\" --max-attempts \"$SANDRONE_MAX_ATTEMPTS\" >> \"$hook_log\" 2>&1 || true; fi; }; write_exit() { code=$1; printf '%s\n' \"$code\" > \"$exit_path\"; run_hook \"$code\"; exit \"$code\"; }; trap 'write_exit 129' HUP; trap 'write_exit 130' INT; trap 'write_exit 143' TERM; sh \"$tool\"; write_exit \"$?\"")
+        .arg(wrapper_script)
         .arg("Sandrone-agent-wrapper")
         .arg(tool_path)
         .arg(&exit_path)
+        .arg(&legacy_exit_path)
         .arg(&hook_log_path)
+        .arg(&events_log_path)
         .current_dir(".")
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     command.process_group(0);
     apply_issue_agent_env(&mut command, request, max_attempts, phase)?;
+    write_job_runtime(
+        agent_runtime_path(&request.request_id),
+        &JobRuntime {
+            kind: "agent",
+            request_id: &request.request_id,
+            stage: phase.as_str(),
+            attempt: "current",
+            worker: "issue-agent",
+            tool: tool_path,
+            pid: None,
+            status: "spawning",
+        },
+    )?;
+    append_job_event(
+        &events_log_path,
+        "dispatched",
+        &format!("stage={}; tool={tool_path}", phase.as_str()),
+    )?;
     let child = command.spawn()?;
-    fs::write(
+    let pid_text = format!("{}\n", child.id());
+    write_runtime_text(
         agent_pid_path(&request.request_id),
-        format!("{}\n", child.id()),
+        &pid_text,
+        Some(&legacy_agent_pid_path(&request.request_id)),
+    )?;
+    write_job_runtime(
+        agent_runtime_path(&request.request_id),
+        &JobRuntime {
+            kind: "agent",
+            request_id: &request.request_id,
+            stage: phase.as_str(),
+            attempt: "current",
+            worker: "issue-agent",
+            tool: tool_path,
+            pid: Some(child.id()),
+            status: "running",
+        },
     )?;
     Ok(child.id())
 }
@@ -3319,6 +3672,10 @@ fn apply_issue_agent_env(
         )
         .env("SANDRONE_MAX_ATTEMPTS", max_attempts.to_string())
         .env("SANDRONE_AGENT_PHASE", phase.as_str())
+        .env(
+            "SANDRONE_AGENT_STATUS_DOC",
+            absolute_path_string(phase_document_path(request, phase)),
+        )
         .env(
             "SANDRONE_CHANGE_PATH",
             absolute_path_string(request.change_path.as_str()),
@@ -3385,11 +3742,12 @@ fn apply_issue_agent_env(
 }
 
 fn read_agent_exit_code(request_id: &str) -> Result<Option<String>> {
-    let path = agent_exit_path(request_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let exit_code = fs::read_to_string(path)?.trim().to_string();
+    let exit_code = read_runtime_text(
+        agent_exit_path(request_id),
+        Some(&legacy_agent_exit_path(request_id)),
+    )?
+    .trim()
+    .to_string();
     if exit_code.is_empty() {
         return Ok(None);
     }
@@ -3397,11 +3755,13 @@ fn read_agent_exit_code(request_id: &str) -> Result<Option<String>> {
 }
 
 fn read_agent_pid(request_id: &str) -> Result<Option<u32>> {
-    let path = agent_pid_path(request_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let pid = fs::read_to_string(path)?.trim().parse::<u32>().ok();
+    let pid = read_runtime_text(
+        agent_pid_path(request_id),
+        Some(&legacy_agent_pid_path(request_id)),
+    )?
+    .trim()
+    .parse::<u32>()
+    .ok();
     Ok(pid)
 }
 
@@ -3409,33 +3769,63 @@ fn process_is_running(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
 }
 
-fn agent_state_dir() -> PathBuf {
-    Path::new(".sandrone/state/agents").to_path_buf()
+fn agent_job_state_dir(request_id: &str) -> PathBuf {
+    runtime_agent_job_state_dir(request_id)
 }
 
 fn agent_pid_path(request_id: &str) -> PathBuf {
-    agent_state_dir().join(format!("{request_id}.pid"))
+    job_pid_path(&agent_job_state_dir(request_id))
 }
 
 fn agent_stdout_path(request_id: &str) -> PathBuf {
-    agent_state_dir().join(format!("{request_id}.stdout.log"))
+    job_stdout_path(&agent_job_state_dir(request_id))
 }
 
 fn agent_stderr_path(request_id: &str) -> PathBuf {
-    agent_state_dir().join(format!("{request_id}.stderr.log"))
+    job_stderr_path(&agent_job_state_dir(request_id))
 }
 
 fn agent_hook_log_path(request_id: &str) -> PathBuf {
-    agent_state_dir().join(format!("{request_id}.hook.log"))
+    job_hook_log_path(&agent_job_state_dir(request_id))
 }
 
 fn agent_exit_path(request_id: &str) -> PathBuf {
-    agent_state_dir().join(format!("{request_id}.exit"))
+    job_exit_path(&agent_job_state_dir(request_id))
+}
+
+fn agent_runtime_path(request_id: &str) -> PathBuf {
+    job_runtime_path(&agent_job_state_dir(request_id))
+}
+
+fn agent_events_log_path(request_id: &str) -> PathBuf {
+    job_events_log_path(&agent_job_state_dir(request_id))
+}
+
+fn legacy_agent_pid_path(request_id: &str) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{request_id}.pid"))
+}
+
+fn legacy_agent_stdout_path(request_id: &str) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{request_id}.stdout.log"))
+}
+
+fn legacy_agent_stderr_path(request_id: &str) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{request_id}.stderr.log"))
+}
+
+fn legacy_agent_hook_log_path(request_id: &str) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{request_id}.hook.log"))
+}
+
+fn legacy_agent_exit_path(request_id: &str) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{request_id}.exit"))
 }
 
 fn run_command(command: &mut Command) -> Result<()> {
@@ -3751,21 +4141,24 @@ fn stage_for_status_json(status: &str) -> &'static str {
         "decomposition"
         | "decomposition-agent-running"
         | "decomposition-submitted"
+        | "decomposition-review-running"
         | "decomposition-review-rejected"
         | "decomposition-approved" => "decomposition",
         "discovered"
         | "planning"
         | "planning-agent-running"
         | "plan-submitted"
+        | "plan-review-running"
         | "plan-review-rejected"
         | "plan-approved" => "planning",
         "in-progress"
         | "implementation-agent-running"
         | "change-doc-submitted"
         | "change-doc-approved"
+        | "code-review-running"
         | "code-review-rejected" => "implementation",
         "rebase-agent-running" | "integration-review-rejected" => "rebase",
-        "integration-review-submitted" => "integration-review",
+        "integration-review-submitted" | "integration-review-running" => "integration-review",
         STATUS_WAIT_UPDATE_PR | STATUS_WAIT_FINISH | STATUS_FINISHED => "delivery",
         "blocked" => "blocked",
         _ => "planning",
@@ -3818,7 +4211,7 @@ fn usage(command: &str) -> Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
+        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  doc-status --request_id <REQ-0001> [--phase <decomposition|planning|implementation|rebase>]\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
     );
 }
 
@@ -3887,6 +4280,9 @@ mod tests {
         assert!(html.contains("renderMarkdownContent"));
         assert!(html.contains("mountJsonViewer"));
         assert!(html.contains("data-json-detail"));
+        assert!(html.contains("reviewerDisplayStatus(item)"));
+        assert!(html.contains("reviewerHasDetail(reviewer)"));
+        assert!(!html.contains("item.runtime_status || item.decision"));
         assert!(html.contains("orderedRequests(project)"));
         assert!(html.contains("request.status === \"finished\" ? 1 : 0"));
         assert!(html.contains("PR 待合并"));

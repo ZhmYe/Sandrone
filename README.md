@@ -112,6 +112,7 @@ flowchart TD
 - 每个父 request 会先拆成一个或多个 slice；小需求通常只有 `S01`。
 - 每个 slice 都走 `plan -> plan-review -> implementation -> code-review`。
 - reviewer 有 blocking finding 时必须退回修复；gate 不可用时必须 block。
+- reviewer gate 和 agent 一样异步运行：命令先派发后台 worker 并返回，worker 结束后由 hook、`sdr advance` 或下一次 `sdr tick` 收敛状态。
 - 自动流程停在 `wait-update-pr` 或 `wait-finish`，不会擅自 merge。
 - 所有文档、review detail、agent 日志、状态和 PR 记录都写入 workspace，便于恢复和审计。
 
@@ -125,12 +126,13 @@ flowchart TD
 | `sdr new --name <project>` | 创建本地空目标仓库。 |
 | `sdr doctor` | 检查 workspace、依赖、connector、CodeGraph 和状态目录。 |
 | `sdr update` | 调用 `tools/issue-update.sh` 抓取/刷新需求，按 external ID 去重。 |
-| `sdr tick` | 扫描需求、派发 agent、执行 gate、推进可继续的 request/slice。 |
+| `sdr tick` | 扫描需求、派发 agent/reviewer worker、收敛 gate、推进可继续的 request/slice。 |
 | `sdr tick --request_id REQ-0001` | 只推进一个 request。 |
 | `sdr list` | 在当前 workspace 列出 request。 |
 | `sdr dashboard` | 打开本机所有已登记 workspace 的监控页面。 |
 | `sdr status REQ-0001` | 查看单个 request 的状态、文档、分支和 worktree。 |
-| `sdr resume --request_id REQ-0001` | 从 blocked 恢复为可派发状态。 |
+| `sdr doc-status --request_id REQ-0001` | 快速读取阶段文档 frontmatter 中的提交状态、format-check 摘要和 gate 状态。 |
+| `sdr resume --request_id REQ-0001` | 从 blocked 恢复；gate 不可用会重跑 reviewer，代码/文档问题会回到 agent。 |
 | `sdr finish --request_id REQ-0001 --message "feat: ..."` | 在 gate 通过后 commit、push 分支并创建/复用 PR。 |
 | `sdr pr-refresh --request_id REQ-0001` | PR 冲突或落后 base 时执行 rebase/集成刷新。 |
 | `sdr pr-status --request_id REQ-0001` | 检查 PR 是否已合并，只有确认 merged 才标记 finished。 |
@@ -153,7 +155,7 @@ flowchart TD
     views/                # Obsidian Bases 视图
     project.canvas        # 从 JSON 派生的人类观察图
   tools/                  # 可替换 connector 脚本
-  .sandrone/        # 机器状态、事件流、锁、agent 日志
+  .sandrone/        # 机器状态、事件流、锁、统一 job 日志
   .env                    # 分阶段模型和运行时配置
 ```
 

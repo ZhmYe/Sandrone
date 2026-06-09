@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 pub(crate) fn proxy_env() -> Vec<(&'static str, String)> {
     ["https_proxy", "http_proxy", "all_proxy"]
@@ -66,6 +67,36 @@ pub(crate) fn file_sha256(path: &Path) -> Result<String> {
         let Ok(output) = output else {
             continue;
         };
+        if output.status.success() {
+            let stdout = String::from_utf8(output.stdout)?;
+            if let Some(hash) = stdout.split_whitespace().next()
+                && !hash.trim().is_empty()
+            {
+                return Ok(hash.to_string());
+            }
+        }
+    }
+    Err("unable to compute sha256: neither shasum nor sha256sum succeeded".into())
+}
+
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> Result<String> {
+    for (program, args) in [
+        ("shasum", vec!["-a", "256"]),
+        ("sha256sum", Vec::<&str>::new()),
+    ] {
+        let spawn_result = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let Ok(mut child) = spawn_result else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(bytes)?;
+        }
+        let output = child.wait_with_output()?;
         if output.status.success() {
             let stdout = String::from_utf8(output.stdout)?;
             if let Some(hash) = stdout.split_whitespace().next()

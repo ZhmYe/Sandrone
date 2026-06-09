@@ -391,22 +391,26 @@ fn dashboard_current_stage(status: &str) -> String {
         "decomposition" | "decomposition-agent-running" | "decomposition-review-rejected" => {
             "decomposition".to_string()
         }
-        "decomposition-submitted" => "decomposition-review".to_string(),
+        "decomposition-submitted" | "decomposition-review-running" => {
+            "decomposition-review".to_string()
+        }
         "discovered" | "planning" | "planning-agent-running" | "plan-review-rejected" => {
             "plan".to_string()
         }
-        "plan-submitted" => "plan-review".to_string(),
+        "plan-submitted" | "plan-review-running" => "plan-review".to_string(),
         "plan-approved"
         | "in-progress"
         | "implementation-agent-running"
         | "code-review-rejected" => "implementation".to_string(),
-        "change-doc-submitted" => "code-review".to_string(),
+        "change-doc-submitted" | "code-review-running" => "code-review".to_string(),
         "change-doc-approved" | "wait-update-pr" | "wait-finish" | "finished" => {
             "finish-pr".to_string()
         }
         STATUS_SLICE_FINISHED => "finish-pr".to_string(),
         "rebase-agent-running" | "integration-review-rejected" => "pr-refresh".to_string(),
-        "integration-review-submitted" => "integration-review".to_string(),
+        "integration-review-submitted" | "integration-review-running" => {
+            "integration-review".to_string()
+        }
         "blocked" => "blocked".to_string(),
         _ => "request".to_string(),
     }
@@ -429,7 +433,12 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         }
         "decomposition" => "pending".to_string(),
         "decomposition-review" if rank >= 15 => "done".to_string(),
-        "decomposition-review" if matches!(status, "decomposition-submitted") => {
+        "decomposition-review"
+            if matches!(
+                status,
+                "decomposition-submitted" | "decomposition-review-running"
+            ) =>
+        {
             "active".to_string()
         }
         "decomposition-review" => "pending".to_string(),
@@ -444,7 +453,9 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         }
         "plan" => "pending".to_string(),
         "plan-review" if rank >= 50 => "done".to_string(),
-        "plan-review" if matches!(status, "plan-submitted") => "active".to_string(),
+        "plan-review" if matches!(status, "plan-submitted" | "plan-review-running") => {
+            "active".to_string()
+        }
         "plan-review" => "pending".to_string(),
         "implementation" if rank >= 70 => "done".to_string(),
         "implementation"
@@ -460,7 +471,9 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         }
         "implementation" => "pending".to_string(),
         "code-review" if rank >= 80 => "done".to_string(),
-        "code-review" if matches!(status, "change-doc-submitted") => "active".to_string(),
+        "code-review" if matches!(status, "change-doc-submitted" | "code-review-running") => {
+            "active".to_string()
+        }
         "code-review" => "pending".to_string(),
         "finish-pr" if status == STATUS_FINISHED => "done".to_string(),
         "finish-pr" if status == STATUS_SLICE_FINISHED => "done".to_string(),
@@ -473,6 +486,7 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
                 && matches!(
                     status,
                     "integration-review-submitted"
+                        | "integration-review-running"
                         | STATUS_WAIT_UPDATE_PR
                         | STATUS_WAIT_FINISH
                         | STATUS_FINISHED
@@ -498,7 +512,12 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
         {
             "done".to_string()
         }
-        "integration-review" if matches!(status, "integration-review-submitted") => {
+        "integration-review"
+            if matches!(
+                status,
+                "integration-review-submitted" | "integration-review-running"
+            ) =>
+        {
             "active".to_string()
         }
         "integration-review" if status == "integration-review-rejected" => "done".to_string(),
@@ -510,7 +529,10 @@ fn dashboard_stage_state(request: &Request, stage_id: &str) -> String {
 fn dashboard_has_pr_refresh(request: &Request) -> bool {
     if matches!(
         canonical_status(&request.status),
-        "rebase-agent-running" | "integration-review-submitted" | "integration-review-rejected"
+        "rebase-agent-running"
+            | "integration-review-submitted"
+            | "integration-review-running"
+            | "integration-review-rejected"
     ) {
         return true;
     }
@@ -620,46 +642,115 @@ fn render_review_attempts_json(request: &Request, stage: &str) -> Result<String>
         .join("reviews")
         .join(stage)
         .join("details");
-    if !details_dir.exists() {
+    let review_state_dir = Path::new(".sandrone")
+        .join("state")
+        .join("reviews")
+        .join(&request.request_id)
+        .join(stage);
+    let mut attempts = Vec::<u32>::new();
+    let mut details_by_attempt = BTreeMap::<u32, Vec<(String, String, String)>>::new();
+    if details_dir.exists() {
+        for entry in fs::read_dir(&details_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".json") {
+                continue;
+            }
+            let Some((attempt_text, _rest)) = filename.split_once('-') else {
+                continue;
+            };
+            let Ok(attempt) = attempt_text.parse::<u32>() else {
+                continue;
+            };
+            if !attempts.contains(&attempt) {
+                attempts.push(attempt);
+            }
+            let path = entry.path().to_string_lossy().to_string();
+            let content = fs::read_to_string(entry.path()).unwrap_or_default();
+            details_by_attempt
+                .entry(attempt)
+                .or_default()
+                .push((filename, path, content));
+        }
+    }
+    if review_state_dir.exists() {
+        for entry in fs::read_dir(review_state_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            if let Ok(attempt) = entry.file_name().to_string_lossy().parse::<u32>()
+                && !attempts.contains(&attempt)
+            {
+                attempts.push(attempt);
+            }
+        }
+    }
+    attempts.sort_unstable();
+    if attempts.is_empty() {
         return Ok("[]".to_string());
     }
-    let mut by_attempt = BTreeMap::<u32, Vec<(String, String, String)>>::new();
-    for entry in fs::read_dir(details_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let filename = entry.file_name().to_string_lossy().to_string();
-        if !filename.ends_with(".json") {
-            continue;
-        }
-        let Some((attempt_text, _rest)) = filename.split_once('-') else {
-            continue;
-        };
-        let Ok(attempt) = attempt_text.parse::<u32>() else {
-            continue;
-        };
-        let path = entry.path().to_string_lossy().to_string();
-        let content = fs::read_to_string(entry.path()).unwrap_or_default();
-        by_attempt
-            .entry(attempt)
-            .or_default()
-            .push((filename, path, content));
-    }
 
-    let mut attempts = String::from("[");
-    for (attempt_index, (attempt, mut details)) in by_attempt.into_iter().enumerate() {
+    let reviewers_for_stage = dashboard_reviewers_for_stage(stage);
+    let mut attempts_json = String::from("[");
+    for (attempt_index, attempt) in attempts.into_iter().enumerate() {
+        let mut details = details_by_attempt.remove(&attempt).unwrap_or_default();
         details.sort_by(|left, right| left.0.cmp(&right.0));
         if attempt_index > 0 {
-            attempts.push_str(", ");
+            attempts_json.push_str(", ");
         }
         let mut reviewers = String::new();
         let mut approved_count = 0usize;
-        let detail_count = details.len();
-        for (detail_index, (filename, path, content)) in details.into_iter().enumerate() {
-            if detail_index > 0 {
+        let mut detail_count = 0usize;
+        let mut reviewer_count = 0usize;
+        let mut waiting_for_detail = false;
+        let mut used_filenames = Vec::<String>::new();
+
+        for reviewer in &reviewers_for_stage {
+            let filename = format!("{attempt:03}-{}.json", reviewer.file_stem);
+            let runtime = dashboard_review_runtime(&request.request_id, stage, attempt, reviewer);
+            let detail = details
+                .iter()
+                .find(|(detail_filename, _, _)| detail_filename == &filename)
+                .cloned();
+            if reviewer_count > 0 {
                 reviewers.push_str(", ");
             }
+            reviewer_count += 1;
+            used_filenames.push(filename.clone());
+            if let Some((filename, path, content)) = detail {
+                detail_count += 1;
+                if json_bool(&content, "approved").unwrap_or(false)
+                    && !review_has_blocking_findings(&content)
+                    && !json_bool(&content, "gate_unavailable").unwrap_or(false)
+                {
+                    approved_count += 1;
+                }
+                reviewers.push_str(&render_review_detail_json(
+                    request, stage, &filename, &path, &content, &runtime,
+                ));
+            } else {
+                if runtime.is_waiting_for_detail() {
+                    waiting_for_detail = true;
+                }
+                reviewers.push_str(&render_pending_review_detail_json(
+                    request, stage, attempt, reviewer, &runtime,
+                ));
+            }
+        }
+
+        for (filename, path, content) in details {
+            if used_filenames.contains(&filename) {
+                continue;
+            }
+            if reviewer_count > 0 {
+                reviewers.push_str(", ");
+            }
+            reviewer_count += 1;
+            detail_count += 1;
             if json_bool(&content, "approved").unwrap_or(false)
                 && !review_has_blocking_findings(&content)
                 && !json_bool(&content, "gate_unavailable").unwrap_or(false)
@@ -667,23 +758,30 @@ fn render_review_attempts_json(request: &Request, stage: &str) -> Result<String>
                 approved_count += 1;
             }
             reviewers.push_str(&render_review_detail_json(
-                request, stage, &filename, &path, &content,
+                request,
+                stage,
+                &filename,
+                &path,
+                &content,
+                &DashboardReviewRuntime::default(),
             ));
         }
-        let status = if detail_count > 0 && approved_count == detail_count {
+        let status = if waiting_for_detail {
+            "running"
+        } else if detail_count > 0 && approved_count == detail_count {
             "approved"
         } else {
             "rejected"
         };
-        attempts.push_str(&format!(
+        attempts_json.push_str(&format!(
             "{{ \"attempt\": {}, \"status\": \"{}\", \"reviewers\": [{}] }}",
             attempt,
             json_escape(status),
             reviewers,
         ));
     }
-    attempts.push(']');
-    Ok(attempts)
+    attempts_json.push(']');
+    Ok(attempts_json)
 }
 
 fn render_review_detail_json(
@@ -692,6 +790,7 @@ fn render_review_detail_json(
     filename: &str,
     path: &str,
     content: &str,
+    runtime: &DashboardReviewRuntime,
 ) -> String {
     let reviewer = json_value(content, "reviewer")
         .unwrap_or_else(|| reviewer_name_from_detail_filename(stage, filename));
@@ -708,7 +807,7 @@ fn render_review_detail_json(
         json_value(content, "recommended_next_phase").unwrap_or_else(|| "unknown".to_string());
     let summary = json_value(content, "summary").unwrap_or_default();
     format!(
-        "{{ \"reviewer\": \"{}\", \"approved\": {}, \"gate_unavailable\": {}, \"decision\": \"{}\", \"recommended_next_phase\": \"{}\", \"summary\": \"{}\", \"detail_path\": \"{}\", \"detail\": \"{}\", \"critical\": {}, \"high\": {}, \"warning\": {}, \"info\": {} }}",
+        "{{ \"reviewer\": \"{}\", \"approved\": {}, \"gate_unavailable\": {}, \"decision\": \"{}\", \"recommended_next_phase\": \"{}\", \"summary\": \"{}\", \"detail_path\": \"{}\", \"detail\": \"{}\", {}, \"critical\": {}, \"high\": {}, \"warning\": {}, \"info\": {} }}",
         json_escape(&reviewer),
         json_bool_literal(approved),
         json_bool_literal(gate_unavailable),
@@ -717,11 +816,221 @@ fn render_review_detail_json(
         json_escape(&summary),
         json_escape(&dashboard_review_detail_relative_path(request, path)),
         json_escape(&truncate_dashboard_content(content)),
+        runtime.render_json(),
         render_review_findings_json(content, "critical"),
         render_review_findings_json(content, "high"),
         render_review_findings_json(content, "warning"),
         render_review_findings_json(content, "info"),
     )
+}
+
+fn render_pending_review_detail_json(
+    request: &Request,
+    stage: &str,
+    attempt: u32,
+    reviewer: &DashboardReviewerDefinition,
+    runtime: &DashboardReviewRuntime,
+) -> String {
+    let detail_path = Path::new(&request.change_path)
+        .join("reviews")
+        .join(stage)
+        .join("details")
+        .join(format!("{attempt:03}-{}.json", reviewer.file_stem));
+    let decision = if runtime.runtime_status.is_empty() {
+        "pending"
+    } else {
+        &runtime.runtime_status
+    };
+    let summary = match runtime.runtime_status.as_str() {
+        "running" => "reviewer worker is running; detail JSON has not been written yet",
+        "exited" => "reviewer worker exited; detail JSON has not been written yet",
+        "stale" => "reviewer worker pid is stale; detail JSON has not been written yet",
+        _ => "reviewer detail JSON has not been written yet",
+    };
+    format!(
+        "{{ \"reviewer\": \"{}\", \"approved\": false, \"gate_unavailable\": false, \"decision\": \"{}\", \"recommended_next_phase\": \"unknown\", \"summary\": \"{}\", \"detail_path\": \"{}\", \"detail\": \"\", {}, \"critical\": [], \"high\": [], \"warning\": [], \"info\": [] }}",
+        json_escape(reviewer.name),
+        json_escape(decision),
+        json_escape(summary),
+        json_escape(&dashboard_review_detail_relative_path(
+            request,
+            &detail_path.to_string_lossy()
+        )),
+        runtime.render_json(),
+    )
+}
+
+#[derive(Clone, Debug)]
+struct DashboardReviewerDefinition {
+    name: &'static str,
+    file_stem: &'static str,
+}
+
+fn dashboard_reviewers_for_stage(stage: &str) -> Vec<DashboardReviewerDefinition> {
+    match stage {
+        "decomposition-review" => vec![DashboardReviewerDefinition {
+            name: "DecompositionReviewer",
+            file_stem: "decomposition-reviewer",
+        }],
+        "plan-review" => vec![DashboardReviewerDefinition {
+            name: "PlanReviewer",
+            file_stem: "plan-reviewer",
+        }],
+        "code-review" => vec![
+            DashboardReviewerDefinition {
+                name: "TestReviewer",
+                file_stem: "test-reviewer",
+            },
+            DashboardReviewerDefinition {
+                name: "DesignReviewer",
+                file_stem: "design-reviewer",
+            },
+        ],
+        "integration-review" => vec![DashboardReviewerDefinition {
+            name: "IntegrationReviewer",
+            file_stem: "integration-reviewer",
+        }],
+        _ => Vec::new(),
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct DashboardReviewRuntime {
+    runtime_status: String,
+    pid: String,
+    exit_code: String,
+    runtime_path: String,
+    events_log_path: String,
+    stdout_path: String,
+    stderr_path: String,
+    hook_log_path: String,
+    runtime_tail: String,
+    events_log_tail: String,
+    stdout_tail: String,
+    stderr_tail: String,
+    hook_log_tail: String,
+}
+
+impl DashboardReviewRuntime {
+    fn is_waiting_for_detail(&self) -> bool {
+        matches!(
+            self.runtime_status.as_str(),
+            "running" | "pending" | "stale"
+        )
+    }
+
+    fn render_json(&self) -> String {
+        format!(
+            "\"runtime_status\": \"{}\", \"pid\": \"{}\", \"exit_code\": \"{}\", \"runtime_path\": \"{}\", \"events_log_path\": \"{}\", \"stdout_path\": \"{}\", \"stderr_path\": \"{}\", \"hook_log_path\": \"{}\", \"runtime_tail\": \"{}\", \"events_log_tail\": \"{}\", \"stdout_tail\": \"{}\", \"stderr_tail\": \"{}\", \"hook_log_tail\": \"{}\"",
+            json_escape(&self.runtime_status),
+            json_escape(&self.pid),
+            json_escape(&self.exit_code),
+            json_escape(&self.runtime_path),
+            json_escape(&self.events_log_path),
+            json_escape(&self.stdout_path),
+            json_escape(&self.stderr_path),
+            json_escape(&self.hook_log_path),
+            json_escape(&self.runtime_tail),
+            json_escape(&self.events_log_tail),
+            json_escape(&self.stdout_tail),
+            json_escape(&self.stderr_tail),
+            json_escape(&self.hook_log_tail),
+        )
+    }
+}
+
+fn dashboard_review_runtime(
+    request_id: &str,
+    stage: &str,
+    attempt: u32,
+    reviewer: &DashboardReviewerDefinition,
+) -> DashboardReviewRuntime {
+    let canonical_job_dir = Path::new(".sandrone")
+        .join("state")
+        .join("jobs")
+        .join(request_id)
+        .join(stage)
+        .join(format!("{attempt:03}"))
+        .join(reviewer.file_stem);
+    let legacy_job_dir = Path::new(".sandrone")
+        .join("state")
+        .join("reviews")
+        .join(request_id)
+        .join(stage)
+        .join(format!("{attempt:03}"))
+        .join(reviewer.file_stem);
+    let job_dir = if canonical_job_dir.exists() {
+        canonical_job_dir.clone()
+    } else if legacy_job_dir.exists() {
+        legacy_job_dir.clone()
+    } else {
+        canonical_job_dir.clone()
+    };
+    let pid_path = existing_runtime_path(job_dir.join("pid"), legacy_job_dir.join("pid"));
+    let exit_path = existing_runtime_path(job_dir.join("exit"), legacy_job_dir.join("exit"));
+    let runtime_path = canonical_job_dir.join("runtime.json");
+    let events_log_path = canonical_job_dir.join("events.log");
+    let stdout_path = existing_runtime_path(
+        canonical_job_dir.join("stdout.log"),
+        legacy_job_dir.join("stdout.log"),
+    );
+    let stderr_path = existing_runtime_path(
+        canonical_job_dir.join("stderr.log"),
+        legacy_job_dir.join("stderr.log"),
+    );
+    let hook_log_path = existing_runtime_path(
+        canonical_job_dir.join("hook.log"),
+        legacy_job_dir.join("hook.log"),
+    );
+    let pid = fs::read_to_string(&pid_path)
+        .map(|content| content.trim().to_string())
+        .unwrap_or_default();
+    let exit_code = fs::read_to_string(&exit_path)
+        .map(|content| content.trim().to_string())
+        .unwrap_or_default();
+    let runtime_status = if !exit_code.is_empty() {
+        "exited".to_string()
+    } else if pid.parse::<u32>().map(process_is_running).unwrap_or(false) {
+        "running".to_string()
+    } else if !pid.is_empty() {
+        "stale".to_string()
+    } else if job_dir.exists() {
+        "pending".to_string()
+    } else {
+        String::new()
+    };
+    DashboardReviewRuntime {
+        runtime_status,
+        pid,
+        exit_code,
+        runtime_path: dashboard_relative_path(&runtime_path),
+        events_log_path: dashboard_relative_path(&events_log_path),
+        stdout_path: dashboard_relative_path(&stdout_path),
+        stderr_path: dashboard_relative_path(&stderr_path),
+        hook_log_path: dashboard_relative_path(&hook_log_path),
+        runtime_tail: dashboard_file_tail(&runtime_path),
+        events_log_tail: dashboard_file_tail(&events_log_path),
+        stdout_tail: dashboard_file_tail(&stdout_path),
+        stderr_tail: dashboard_file_tail(&stderr_path),
+        hook_log_tail: dashboard_file_tail(&hook_log_path),
+    }
+}
+
+fn dashboard_relative_path(path: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(env::current_dir().unwrap_or_default()) {
+        return relative.to_string_lossy().to_string();
+    }
+    path.to_string_lossy().to_string()
+}
+
+fn dashboard_file_tail(path: &Path) -> String {
+    const MAX_CHARS: usize = 12_000;
+    let Ok(content) = fs::read_to_string(path) else {
+        return String::new();
+    };
+    let chars = content.chars().collect::<Vec<_>>();
+    let start = chars.len().saturating_sub(MAX_CHARS);
+    chars[start..].iter().collect()
 }
 
 fn dashboard_review_detail_relative_path(request: &Request, path: &str) -> String {

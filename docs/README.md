@@ -15,3 +15,4 @@
 | [operations.md](operations.md) | 自动化、finish、PR 状态、rebase、升级、恢复。 |
 | [development.md](development.md) | 本框架仓库自身的维护、proposal 和验证命令。 |
 | [constitution.md](constitution.md) | 项目 constitution 的入口指针。 |
+| [proposals/README.md](proposals/README.md) | 历史 proposal 归档说明；旧状态设计只用于追溯，不作为当前规范。 |

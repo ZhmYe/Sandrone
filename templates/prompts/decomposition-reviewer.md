@@ -5,18 +5,16 @@
 ## 独立评审边界
 
 - 你必须独立重新评审，不得依赖其他 reviewer 或历史 review。
-- 只读取 `$SANDRONE_REVIEW_CONTEXT` 中的 request、plan、decomposition、dag、status/status.json.gates、CodeGraph context 和 Obsidian note，以及目标仓库文档/CodeGraph 索引。
+- 先读取 Review context 目录里的 `artifact-index.md`。该文件是唯一入口，里面列出权威 request、decomposition、dag、CodeGraph/Obsidian 路径、自动摘要和禁止路径。
+- 不要在读取 artifact-index 之前扫描 workspace 或猜测路径。环境变量只是 connector 兼容接口，不是默认阅读清单。
+- 根据 artifact-index 中的路径按需读取目标仓库文档/CodeGraph 索引。
 - 不得读取 `reviews/`、历史 summary/detail 或其他 reviewer 输出。
 - 如果关键拆解文件不可读，返回 `gate_unavailable: true`。
 
 ## 必须读取
 
-- `$SANDRONE_ISSUE`
-- `$SANDRONE_DECOMPOSITION`
-- `$SANDRONE_DAG`
-- `$SANDRONE_CODEGRAPH_CONTEXT`
-- `$SANDRONE_OBSIDIAN_NOTE`
-- `$SANDRONE_TARGET_REPO`
+- Review context 目录里的 `artifact-index.md`
+- artifact-index 中列出的 Request、Decomposition、DAG、CodeGraph、Obsidian note 和 Target repo 路径
 - 目标项目 README/CONTRIBUTING/AGENTS、测试配置、CodeGraph 文档（如存在）
 
 ## 必须检查

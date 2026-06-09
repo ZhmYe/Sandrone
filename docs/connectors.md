@@ -41,6 +41,28 @@ external_id<TAB>source<TAB>title<TAB>body<TAB>url
 
 agent 必须在退出前自检 reviewer 会检查的内容。明显会产生 critical/high 的问题，应先修复或 block，不要浪费 review 轮次。
 
+agent 成功完成当前 phase 后，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 的 YAML frontmatter。状态头必须包含 `request_id`、当前 `agent_phase`、`agent_status: submitted` 和 `agent_ready_for_review: true`。implementation/rebase 还应写入简洁的 `format_check_status` 和 `format_check_exit_code`。Codex CLI 可能因为本轮早期工具命令失败而最终返回非零；外层 `advance` 只有在非零退出且文档提交状态有效时才会继续提交 review gate。没有有效文档状态、状态不匹配或产物不完整时必须 block。这个状态头不是 approval，也不能替代 reviewer。
+
+默认 agent backend 是 `codex-cli`，也可以让 Codex CLI 使用指定 API provider：
+
+- `SANDRONE_AGENT_BACKEND=codex-cli`：默认值，调用 Codex CLI。
+- `SANDRONE_AGENT_BACKEND=codex-api`：仍然调用 Codex CLI，但临时注入 `model_provider`，让 Codex 使用 `LLM_API_KEY`、`LLM_BASE_URL` 和当前阶段模型。这是 agent 使用 API key/base URL/model 的推荐方式。
+- `SANDRONE_AGENT_BACKEND=claude-code`：保留值，默认脚本暂未实现；若设置会阻塞。
+
+可以按阶段覆盖 backend：`SANDRONE_DECOMPOSITION_AGENT_BACKEND`、`SANDRONE_PLAN_AGENT_BACKEND`、`SANDRONE_IMPLEMENTATION_AGENT_BACKEND`。
+
+`codex-api` 保留 Codex 的文件读取、代码编辑、命令执行、sandbox、session 和 reviewer 的 `--output-schema` 能力。它仍然通过 `codex exec` 运行，默认参数包含 `approval_policy="never"`、`shell_environment_policy.inherit="all"` 和 `--sandbox workspace-write`，所以不会弹交互式审批；遇到 sandbox 不允许的写入、命令或网络问题时应失败并进入 block，而不是绕过门禁。默认脚本不再提供脚本直连 API 并代写文件的实现；如果你确实需要其他模型系统，应替换 connector 脚本，并保持同样的输入输出契约。
+
+默认 agent connector 使用 `codex exec --ignore-user-config`，不继承用户个人 Codex config、skill 和插件。Sandrone 会把当前 phase 需要的 prompt、CodeGraph/Obsidian 路径、review detail 路径和脚本能力显式传入 agent；这样可以避免自动化子会话被个人 skill/plugin 强制读入大量无关上下文。
+
+如果某个项目确实需要子 agent 继承个人 Codex skill/plugin，可以在 workspace `.env` 显式设置：
+
+```bash
+SANDRONE_AGENT_IGNORE_USER_CONFIG=0
+```
+
+关闭隔离后仍要遵守 prompt 的分层读取策略：优先读取当前 status、当前 phase 主产物、CodeGraph context、Obsidian 当前 index、agent journal 最近几轮，以及启动 prompt 列出的最新 review detail；不要一次性扫描完整 skill、完整 project vault、全部 review 历史或全部 slice 文档。
+
 ## `tools/check-format.sh`
 
 code-review 前置检查 connector，支持：
@@ -56,7 +78,7 @@ tools/check-format.sh --check
 - `--check`：运行 `cargo fmt --check`、`cargo check`、`cargo clippy --all-targets --all-features -- -D warnings`。
 - 非 Rust 项目默认明确 skip。
 
-`code-review` 会先运行 `--check`。失败时不会调用 TestReviewer/DesignReviewer，而是写入 `checks/format-check.md`，把 request/slice 回退到 implementation。
+`code-review` 会先同步运行 `--check`。失败时不会派发 TestReviewer/DesignReviewer，而是把摘要写入 `status.json.reason`、事件流和 change-doc frontmatter，然后把 request/slice 回退到 implementation。`--check` 通过后，reviewer worker 才会异步派发。
 
 ## Reviewer 脚本
 
@@ -69,6 +91,40 @@ tools/check-format.sh --check
 - `tools/integration-review.sh`
 
 stdout 必须是符合 `tools/schemas/review-result.schema.json` 的 JSON 对象。非法 JSON、空输出、schema 不匹配或脚本失败都会成为 blocking review。
+
+reviewer 命令是异步的：`sdr plan-review`、`sdr code-review`、`sdr integration-review` 只负责创建 attempt、派发 worker 并返回；worker 完成后通过 hook 调用 `advance` 收敛。后台状态和日志在 `.sandrone/state/jobs/<REQ>/<stage>/<attempt>/<reviewer>/`，包含 pid、exit、stdout/stderr、hook、events 和 runtime 元数据；最终结构化结果仍写入 `obsidian/changes/**/reviews/<stage>/details/`。
+
+每个 reviewer 的 `SANDRONE_REVIEW_CONTEXT` 是轻量索引目录，不复制完整 plan、change-doc 或 Obsidian 长文档。框架会自动生成：
+
+- `artifact-index.md`：唯一入口，列出权威原始路径、读取顺序、禁止路径和 slice/request 说明。
+- `changed-files.txt`：从 worktree git status/diff 自动生成。
+- `diff-stat.txt`：从 worktree diff stat 自动生成。
+- `test-summary.txt`：从 change-doc 的验证相关内容和路径信息生成的轻量摘要。
+
+默认 reviewer prompt 会要求先读 `artifact-index.md`。`SANDRONE_PLAN`、`SANDRONE_CHANGE_DOC` 等环境变量仍会指向原始 Obsidian 文件，主要用于兼容自定义 connector，不是默认上下文展开方式。对 slice 来说，没有独立 `request.md`，plan 就是 slice 的权威 request+plan。
+
+默认脚本支持这些 backend：
+
+- `SANDRONE_REVIEW_BACKEND=codex-cli`：默认值，调用 Codex CLI，并为 reviewer 创建隔离的临时 `CODEX_HOME`。
+- `SANDRONE_REVIEW_BACKEND=codex-api`：调用 Codex CLI，并让 Codex 使用 `LLM_API_KEY`、`LLM_BASE_URL` 和当前 reviewer 模型；仍然保留 `--output-schema` 结构化输出。
+- `SANDRONE_REVIEW_BACKEND=claude-code`：保留值，默认脚本暂未实现；若设置会返回 `gate_unavailable=true`。
+
+可以按 reviewer 类型覆盖 backend：`SANDRONE_DECOMPOSITION_REVIEWER_BACKEND`、`SANDRONE_PLAN_REVIEWER_BACKEND`、`SANDRONE_TEST_REVIEWER_BACKEND`、`SANDRONE_DESIGN_REVIEWER_BACKEND`、`SANDRONE_INTEGRATION_REVIEWER_BACKEND`。
+
+backend 解析优先级：agent 是阶段专用 backend -> `SANDRONE_AGENT_BACKEND` / `SANDRONE_BACKEND` -> 默认 `codex-cli`；reviewer 是类型专用 backend -> `SANDRONE_REVIEWER_BACKEND` -> `SANDRONE_REVIEW_BACKEND` -> 默认 `codex-cli`。
+
+`codex-api` 通用变量：
+
+- `LLM_API_KEY`：API key。
+- `LLM_BASE_URL`：API root，例如 `https://api.openai.com/v1` 或兼容 `/v1` 的 provider。
+- `SANDRONE_CODEX_MODEL_PROVIDER`：`codex-api` 的临时 provider id，默认 `sandrone-api`。
+- `SANDRONE_CODEX_PROVIDER_NAME`：`codex-api` 的 provider 显示名，默认 `Sandrone API`。
+- `SANDRONE_CODEX_WIRE_API`：`codex-api` 的 Codex wire API，默认 `responses`。
+- `SANDRONE_CODEX_MODEL_CATALOG_JSON`：可选，指向 Codex `model_catalog_json` 文件；未设置时脚本优先使用 `$CODEX_HOME/models_cache.json` 或 `$HOME/.codex/models_cache.json`，否则用 `codex debug models --bundled` 生成临时 catalog。默认 `codex-cli` 和 `codex-api` 都会设置这个值，避免 Codex 启动时现场刷新模型列表，也避免第三方 `/models` 返回格式不兼容导致 Codex 启动失败。
+- `SANDRONE_REVIEW_TIMEOUT_SECONDS`：reviewer 子进程超时，默认 `1800`。超时会被转换成 `gate_unavailable=true` 的 blocking review，避免后台 worker 无限运行；`advance`/`tick` 收敛时会把它标记为 blocked。
+- `SANDRONE_*_REVIEWER_MODEL`、`SANDRONE_REVIEWER_MODEL` 或 `SANDRONE_MODEL`：选择 reviewer 模型。
+
+API key 只能放在本地未提交的 `.env` 或 shell 环境中，不要写入文档、review detail 或仓库。
 
 最小结构示例：
 

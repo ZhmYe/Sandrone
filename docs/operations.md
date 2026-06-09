@@ -64,7 +64,7 @@ sdr pr-refresh --request_id REQ-0001
 1. 调用 `tools/pr-status.sh` 观察 PR。
 2. fetch base。
 3. 尝试 rebase。
-4. clean rebase 时更新文档并运行 IntegrationReviewer。
+4. clean rebase 时更新文档并派发 IntegrationReviewer worker。
 5. 冲突时记录 `pr-conflicts/attempts/NNN-rebase-conflict.md`，派发 RebaseAgent。
 6. IntegrationReviewer 通过后回到 `wait-update-pr`。
 
@@ -85,7 +85,8 @@ obsidian/changes/<name>/<REQ> recovery.md
 obsidian/changes/<name>/status.json
 obsidian/changes/<name>/<REQ> agent-journal.md
 obsidian/changes/<name>/reviews/*/details/*.json
-.sandrone/state/agents/<REQ>.stderr.log
+.sandrone/state/jobs/<REQ>/agent/current/issue-agent/stderr.log
+.sandrone/state/jobs/<REQ>/<stage>/<attempt>/<reviewer>/stderr.log
 ```
 
 修复外部问题后：
@@ -95,7 +96,12 @@ sdr resume --request_id REQ-0001
 sdr tick --request_id REQ-0001
 ```
 
-不要手写 approval JSON，不要修改 reviewer 输出绕过门禁。gate 不可用时必须先修 reviewer/backend/网络/schema。
+`resume` 不会伪造 approval。它只把 `blocked` 改回下一步可执行状态：
+
+- 如果 blocked 来自 reviewer/backend/schema/network 的 `gate_unavailable`，恢复到 `decomposition-submitted`、`plan-submitted`、`change-doc-submitted` 或 `integration-review-submitted`，下一次 `tick` 重跑 reviewer。
+- 如果 blocked 来自 reviewer finding、format/check 失败、实现未完成或超过最大轮次，恢复到对应 review-rejected/planning 状态，下一次 `tick` 派发 agent 修复。
+
+不要手写阶段文档 frontmatter 的 `gate_*` 字段，不要恢复旧版 approval 记录，也不要修改 reviewer 输出绕过门禁。gate 不可用时必须先修 reviewer/backend/网络/schema。
 
 ## Upgrade
 
@@ -113,7 +119,7 @@ sdr upgrade --dry-run
 sdr upgrade
 ```
 
-普通 `upgrade` 会刷新 `.example.*`、迁移 runtime 文档、更新 registry，但不会覆盖正式 `tools/*.sh`、prompt 或 schema。
+普通 `upgrade` 会刷新 `.example.*`、迁移 runtime 文档、更新 registry、补齐阶段 Markdown 的 Sandrone frontmatter，并清理旧 `.sandrone/state/agents/*.success` marker；它不会覆盖正式 `tools/*.sh`、prompt 或 schema。
 
 如果确认没有自定义 connector/prompt/schema：
 

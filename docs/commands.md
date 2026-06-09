@@ -11,7 +11,7 @@
 | `sdr doctor` | 检查 workspace、Git、Codex CLI、GitHub CLI、CodeGraph、connector、schema 和事件目录。 |
 | `sdr validate` | 检查已有 request 是否具备必要 runtime 文档。 |
 | `sdr upgrade --dry-run` | 预览旧 workspace 升级内容。 |
-| `sdr upgrade` | 升级 schema、session registry、example、runtime 文档和 registry，不覆盖正式 connector。 |
+| `sdr upgrade` | 升级 schema、session registry、example、runtime 文档和 registry，迁移阶段文档 frontmatter，不覆盖正式 connector。 |
 | `sdr upgrade --default` | 刷新 `.example.*` 后，用默认实现覆盖正式 connector、prompt 和 schema。 |
 | `sdr obsidian-refresh` | 重新同步 Obsidian 导航、derived JSON、Base 和 Canvas。 |
 
@@ -23,6 +23,8 @@
 | `sdr list` | 列出当前 workspace 的 request。 |
 | `sdr status` | 输出 workspace 基本信息和状态计数。 |
 | `sdr status REQ-0001` | 输出单个 request 的来源、状态、文档路径、分支和 worktree。 |
+| `sdr doc-status --request_id REQ-0001` | 读取当前阶段文档 frontmatter，快速查看文档提交状态、format-check 摘要和 gate 状态。 |
+| `sdr doc-status --request_id REQ-0001 --phase implementation` | 指定读取 decomposition、planning、implementation 或 rebase 阶段文档状态。 |
 | `sdr sessions` | 列出 session registry。 |
 | `sdr sessions --json` | JSON 输出 session registry。 |
 | `sdr session --request_id REQ-0001 --phase planning --thread_id <id>` | 手动登记可见会话信息。 |
@@ -31,11 +33,11 @@
 
 | 命令 | 作用 |
 | --- | --- |
-| `sdr tick` | 扫描全部 request，刷新已结束 agent 状态，在并发上限内派发 agent。 |
+| `sdr tick` | 扫描全部 request，刷新已结束 agent/reviewer 状态，在并发上限内派发下一步 agent 或收敛 review。 |
 | `sdr tick --request_id REQ-0001` | 只处理一个 request。 |
 | `sdr tick --parallel-limit 2` | 单次覆盖并发上限。 |
 | `sdr tick --max-attempts 20` | 单次覆盖 review 最大修复轮数。 |
-| `sdr advance --request_id REQ-0001` | 推进单个 request；通常由 agent wrapper hook 自动调用。 |
+| `sdr advance --request_id REQ-0001` | 推进单个 request；通常由 agent 或 review worker hook 自动调用。 |
 
 ## 手动门禁
 
@@ -45,16 +47,16 @@
 | --- | --- |
 | `sdr decompose --name <YYYY-MM-DD-name> --request_id REQ-0001` | 创建父 request 拆解文档、slice DAG 和 Obsidian 导航。 |
 | `sdr submit --request_id REQ-0001 --gate decomposition` | 提交 decomposition gate。 |
-| `sdr decomposition-review --request_id REQ-0001` | 运行 DecompositionReviewer。 |
+| `sdr decomposition-review --request_id REQ-0001` | 派发 DecompositionReviewer worker 并返回。 |
 | `sdr plan --name <YYYY-MM-DD-name> --request_id REQ-0001` | 兼容入口：创建计划文档包。自动 slice 流程通常由 agent 填写 slice plan。 |
 | `sdr submit --request_id REQ-0001 --gate plan` | 提交 plan gate。 |
-| `sdr plan-review --request_id REQ-0001` | 运行 PlanReviewer。 |
+| `sdr plan-review --request_id REQ-0001` | 派发 PlanReviewer worker 并返回。 |
 | `sdr start --request_id REQ-0001` | 在 plan gate 有效后创建 worktree 和分支。 |
 | `sdr submit --request_id REQ-0001 --gate change-doc` | 提交 change-doc gate。 |
-| `sdr code-review --request_id REQ-0001` | 运行格式检查、TestReviewer 和 DesignReviewer。 |
-| `sdr integration-review --request_id REQ-0001` | 运行 PR refresh 后的轻量集成门禁。 |
-| `sdr gates --request_id REQ-0001` | 查看 gate 状态；`approvals` 是兼容别名。 |
-| `sdr gates --request_id REQ-0001 --json` | JSON 查看 gate 状态。 |
+| `sdr code-review --request_id REQ-0001` | 同步运行格式检查；通过后派发 TestReviewer 和 DesignReviewer worker 并返回。 |
+| `sdr integration-review --request_id REQ-0001` | 派发 PR refresh 后的轻量 IntegrationReviewer worker 并返回。 |
+| `sdr gates --request_id REQ-0001` | 查看 gate 状态；状态来自对应阶段 Markdown frontmatter，`approvals` 是兼容别名。 |
+| `sdr gates --request_id REQ-0001 --json` | JSON 查看 gate 状态，便于机器人读取。 |
 | `sdr approve --request_id REQ-0001 --gate plan --by <actor>` | 人工批准 gate。 |
 | `sdr reject --request_id REQ-0001 --gate plan --by <actor>` | 人工拒绝 gate。 |
 
@@ -63,10 +65,10 @@
 | 命令 | 作用 |
 | --- | --- |
 | `sdr block --request_id REQ-0001 --stage implementation --reason "<reason>"` | 显式标记 blocked 并写入 recovery。 |
-| `sdr resume --request_id REQ-0001` | 从 blocked 恢复到可派发状态，同步 `requests.tsv` 和 `status.json`。 |
+| `sdr resume --request_id REQ-0001` | 从 blocked 恢复到可派发状态；gate 不可用会重跑 reviewer，代码/文档问题会回到 agent 修复。 |
 | `sdr finish --request_id REQ-0001 --message "feat: ..."` | 校验 gate，commit、push 分支并调用 PR connector。 |
 | `sdr pr-status --request_id REQ-0001` | 调用 PR 状态脚本；只有 `merged` 才标记 finished。 |
-| `sdr pr-refresh --request_id REQ-0001` | 同步 base/master、rebase、处理冲突并运行 IntegrationReviewer。 |
+| `sdr pr-refresh --request_id REQ-0001` | 同步 base/master、rebase、处理冲突并派发/收敛 IntegrationReviewer。 |
 
 ## Dashboard
 

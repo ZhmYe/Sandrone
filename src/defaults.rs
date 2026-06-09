@@ -307,6 +307,37 @@ fn request_template_values(request: &Request) -> Vec<(&'static str, String)> {
             request_artifact_file_name(request, "pr-doc.md"),
         ),
         (
+            "slice_meta_path",
+            if is_slice_request(request) {
+                Path::new(&request.change_path)
+                    .join("slice.json")
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                "not-applicable".to_string()
+            },
+        ),
+        (
+            "parent_request_path",
+            if is_slice_request(request) {
+                parent_artifact_path_for_slice(request, "request.md")
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "父需求 request.md".to_string())
+            } else {
+                "not-applicable".to_string()
+            },
+        ),
+        (
+            "dag_path",
+            if is_slice_request(request) {
+                parent_artifact_path_for_slice(request, "dag.json")
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "父需求 dag.json".to_string())
+            } else {
+                request_artifact_path_string(request, "dag.json")
+            },
+        ),
+        (
             "request_link",
             request_artifact_markdown_link(request, request_link_artifact, "request.md"),
         ),

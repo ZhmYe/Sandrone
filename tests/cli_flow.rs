@@ -5,6 +5,8 @@ use std::process::{Command, Output};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SOURCE_SKILL: &str = include_str!("../skills/sandrone/SKILL.md");
+const MAIN_RS: &str = include_str!("../src/main.rs");
+const JOBS_RS: &str = include_str!("../src/jobs.rs");
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sandrone"))
@@ -227,6 +229,86 @@ fn wait_for_file_contains(path: &Path, expected: &str) {
     );
 }
 
+fn wait_for_file_contains_any(path: &Path, expected: &[&str]) {
+    for _ in 0..100 {
+        if path.exists() {
+            let content = fs::read_to_string(path).expect("waited file should be readable");
+            if expected.iter().any(|value| content.contains(value)) {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "timed out waiting for file content: {} should contain one of {:?}",
+        path.display(),
+        expected
+    );
+}
+
+fn advance_until_not_review_running(workspace: &Path, request_id: &str) {
+    for _ in 0..100 {
+        let state =
+            fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).unwrap_or_default();
+        let line = state
+            .lines()
+            .find(|line| line.starts_with(&format!("{request_id}\t")))
+            .unwrap_or("");
+        if !line.contains("review-running") {
+            return;
+        }
+        let output = Command::new(bin())
+            .args(["advance", "--request_id", request_id])
+            .current_dir(workspace)
+            .output()
+            .expect("advance command should run");
+        assert!(
+            output.status.success(),
+            "advance failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let state =
+            fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).unwrap_or_default();
+        let line = state
+            .lines()
+            .find(|line| line.starts_with(&format!("{request_id}\t")))
+            .unwrap_or("");
+        if !line.contains("review-running") {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("timed out waiting for async review to finish for {request_id}");
+}
+
+fn advance_until_request_state_contains(workspace: &Path, request_id: &str, expected: &str) {
+    for _ in 0..200 {
+        let state =
+            fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).unwrap_or_default();
+        let line = state
+            .lines()
+            .find(|line| line.starts_with(&format!("{request_id}\t")))
+            .unwrap_or("");
+        if line.contains(expected) {
+            return;
+        }
+        let output = Command::new(bin())
+            .args(["advance", "--request_id", request_id])
+            .current_dir(workspace)
+            .output()
+            .expect("advance command should run");
+        assert!(
+            output.status.success(),
+            "advance failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("timed out waiting for {request_id} state to contain {expected}");
+}
+
 fn create_bare_origin_with_master(label: &str) -> PathBuf {
     let origin_parent = temp_workspace(label);
     let origin = origin_parent.join("origin.git");
@@ -424,40 +506,60 @@ fn bootstrap_documents_remote_one_command_install() {
 
 #[test]
 fn skill_requires_install_or_verify_cli_before_workspace_commands() {
+    assert!(
+        SOURCE_SKILL.lines().count() < 180,
+        "skill should stay compact so child agents do not ingest the whole manual"
+    );
     assert!(SOURCE_SKILL.contains("## 必做第一步: 安装或验证 CLI"));
     assert!(SOURCE_SKILL.contains("Before any workspace command"));
     assert!(SOURCE_SKILL.contains("sandrone --help"));
     assert!(SOURCE_SKILL.contains("Do not run workspace commands until"));
     assert!(SOURCE_SKILL.contains("bootstrap.sh | sh"));
+    assert!(SOURCE_SKILL.contains("## 上下文预算"));
+    assert!(SOURCE_SKILL.contains("必要 skill/plugin 可以用"));
+    assert!(SOURCE_SKILL.contains("SANDRONE_AGENT_IGNORE_USER_CONFIG"));
+    assert!(SOURCE_SKILL.contains("自动化子 agent 默认不继承用户个人 Codex config"));
     assert!(SOURCE_SKILL.contains("--parallel-limit"));
     assert!(SOURCE_SKILL.contains("parallel_limit = 1"));
     assert!(SOURCE_SKILL.contains("SANDRONE_REVIEW_CONTEXT"));
     assert!(SOURCE_SKILL.contains("不得读取其他 reviewer 输出"));
-    assert!(SOURCE_SKILL.contains("审批是显式状态化门禁"));
+    assert!(SOURCE_SKILL.contains("SANDRONE_AGENT_STATUS_DOC"));
+    assert!(SOURCE_SKILL.contains("不能替代 reviewer"));
+    assert!(SOURCE_SKILL.contains("审批/门禁是显式状态化流程"));
     assert!(SOURCE_SKILL.contains("交付文档中的 checklist 必须全部打勾"));
     assert!(SOURCE_SKILL.contains("无法由当前流程完成的事项不得保留为未勾选 checklist"));
     assert!(SOURCE_SKILL.contains("sandrone upgrade --dry-run"));
     assert!(SOURCE_SKILL.contains("sandrone upgrade --default"));
-    assert!(SOURCE_SKILL.contains("workspaces.json"));
+    assert!(SOURCE_SKILL.contains("docs/workspace-layout.md"));
+    assert!(SOURCE_SKILL.contains("安装态 `~/.codex/skills/sandrone` 默认只包含本 `SKILL.md`"));
     assert!(SOURCE_SKILL.contains("sandrone dashboard"));
     assert!(SOURCE_SKILL.contains("sdr dashboard"));
     assert!(SOURCE_SKILL.contains("需求分析"));
     assert!(SOURCE_SKILL.contains("Slice 1"));
-    assert!(SOURCE_SKILL.contains("Review 结果` tab"));
-    assert!(SOURCE_SKILL.contains("不要依赖会被覆盖的 `summary.json`"));
-    assert!(SOURCE_SKILL.contains("纵向列表"));
+    assert!(SOURCE_SKILL.contains("Review 结果"));
     assert!(SOURCE_SKILL.contains("marked"));
     assert!(SOURCE_SKILL.contains("jsoneditor"));
     assert!(SOURCE_SKILL.contains("PlanReviewer 提交前自检"));
     assert!(SOURCE_SKILL.contains("Code Review 提交前自检"));
-    assert!(SOURCE_SKILL.contains("src/registry.rs"));
-    assert!(SOURCE_SKILL.contains("src/state.rs"));
-    assert!(SOURCE_SKILL.contains("src/review_gate.rs"));
-    assert!(SOURCE_SKILL.contains("src/defaults.rs"));
-    assert!(SOURCE_SKILL.contains("templates/prompts/*.md"));
+    assert!(SOURCE_SKILL.contains("docs/development.md"));
+    assert!(SOURCE_SKILL.contains("tools/prompts/issue-agent.md"));
     assert!(SOURCE_SKILL.contains("RebaseAgent"));
     assert!(SOURCE_SKILL.contains("IntegrationReviewer"));
     assert!(SOURCE_SKILL.contains("不能为了自己分支的修改删除 base/master 新代码"));
+}
+
+#[test]
+fn agent_wrapper_falls_back_from_legacy_binary_names() {
+    assert!(MAIN_RS.contains("create_truncated_runtime_file"));
+    assert!(JOBS_RS.contains(".truncate(true)"));
+    assert!(MAIN_RS.contains("SANDRONE_AGENT_STATUS_DOC"));
+    assert!(MAIN_RS.contains("agent_document_status_is_submitted"));
+    assert!(MAIN_RS.contains("agent_document_status_used"));
+    assert!(MAIN_RS.contains("resolve_sandrone_bin()"));
+    assert!(MAIN_RS.contains("command -v sandrone"));
+    assert!(MAIN_RS.contains("command -v sdr"));
+    assert!(MAIN_RS.contains("codex-auto-dev)"));
+    assert!(MAIN_RS.contains("Sandrone-agent-wrapper: sandrone CLI not found"));
 }
 
 #[test]
@@ -579,10 +681,21 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(issue_agent.contains("MUST NOT call sandrone approve/reject"));
     assert!(issue_agent.contains("gate_unavailable=true"));
     assert!(issue_agent.contains("shell_environment_policy.inherit"));
+    assert!(issue_agent.contains("Latest review detail files"));
+    assert!(issue_agent.contains("SANDRONE_LATEST_ACTIONABLE_REVIEW_DETAILS"));
+    assert!(issue_agent.contains("SANDRONE_AGENT_STATUS_DOC"));
+    assert!(issue_agent.contains("Agent status doc"));
+    assert!(issue_agent.contains("SANDRONE_AGENT_IGNORE_USER_CONFIG"));
+    assert!(issue_agent.contains("resolve_agent_ignore_user_config"));
+    assert!(issue_agent.contains("value:-1"));
+    assert!(issue_agent.contains("--ignore-user-config"));
     let issue_agent_prompt = fs::read_to_string(workspace.join("tools/prompts/issue-agent.md"))
         .expect("issue agent prompt readable");
     assert!(issue_agent_prompt.contains("共享 agent 契约"));
     assert!(issue_agent_prompt.contains("## 绝对边界"));
+    assert!(issue_agent_prompt.contains("上下文预算与读取顺序"));
+    assert!(issue_agent_prompt.contains("Skill/plugin 使用原则"));
+    assert!(issue_agent_prompt.contains("完整 `skills/sandrone/SKILL.md`"));
     assert!(issue_agent_prompt.contains("## Journal 格式"));
     assert!(issue_agent_prompt.contains("每条 reviewer critical/high 都必须有对应处理说明"));
     assert!(issue_agent_prompt.contains("## Reviewer 提交前自检"));
@@ -590,6 +703,10 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(issue_agent_prompt.contains("TestReviewer"));
     assert!(issue_agent_prompt.contains("DesignReviewer"));
     assert!(issue_agent_prompt.contains("历史 `gate_unavailable` 不是 block 理由"));
+    assert!(issue_agent_prompt.contains("## 文档提交状态"));
+    assert!(issue_agent_prompt.contains("agent_status: submitted"));
+    assert!(issue_agent_prompt.contains("agent_ready_for_review: true"));
+    assert!(issue_agent_prompt.contains("不能替代 reviewer"));
     let decomposition_agent_prompt =
         fs::read_to_string(workspace.join("tools/prompts/decomposition-agent.md"))
             .expect("decomposition agent prompt readable");
@@ -641,12 +758,17 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(rebase_agent.contains("SANDRONE_AGENT_PHASE"));
     assert!(rebase_agent.contains("rebase"));
     assert!(rebase_agent.contains("resolve_codex_bin"));
+    assert!(rebase_agent.contains("SANDRONE_AGENT_IGNORE_USER_CONFIG"));
+    assert!(rebase_agent.contains("resolve_agent_ignore_user_config"));
+    assert!(rebase_agent.contains("--ignore-user-config"));
+    assert!(rebase_agent.contains("SANDRONE_AGENT_STATUS_DOC"));
     let rebase_agent_prompt = fs::read_to_string(workspace.join("tools/prompts/rebase-agent.md"))
         .expect("rebase agent prompt readable");
     assert!(rebase_agent_prompt.contains("RebaseAgent"));
     assert!(rebase_agent_prompt.contains("保留 base/master"));
     assert!(rebase_agent_prompt.contains("不能为了自己分支的修改删除 base/master 新代码"));
     assert!(rebase_agent_prompt.contains("不得扩大需求范围"));
+    assert!(rebase_agent_prompt.contains("SANDRONE_AGENT_STATUS_DOC"));
     let pr_tool =
         fs::read_to_string(workspace.join("tools/pr-create.sh")).expect("pr tool readable");
     assert!(pr_tool.contains("Connector contract"));
@@ -664,8 +786,21 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(review_tool.contains("exactly one JSON object"));
     assert!(review_tool.contains("gate_unavailable=true"));
     assert!(review_tool.contains("SANDRONE_REVIEW_CONTEXT"));
+    assert!(review_tool.contains("artifact-index.md"));
     assert!(review_tool.contains("SANDRONE_REVIEW_FORBIDDEN_PATHS"));
     assert!(review_tool.contains("SANDRONE_REVIEW_CODEX_HOME"));
+    assert!(review_tool.contains("SANDRONE_REVIEW_BACKEND"));
+    assert!(review_tool.contains("codex-cli"));
+    assert!(review_tool.contains("codex-api"));
+    assert!(review_tool.contains("claude-code"));
+    assert!(review_tool.contains("LLM_API_KEY"));
+    assert!(review_tool.contains("LLM_BASE_URL"));
+    assert!(review_tool.contains("model_provider"));
+    assert!(review_tool.contains("model_providers."));
+    assert!(review_tool.contains("SANDRONE_CODEX_WIRE_API"));
+    assert!(review_tool.contains("SANDRONE_CODEX_MODEL_CATALOG_JSON"));
+    assert!(review_tool.contains("model_catalog_json"));
+    assert!(review_tool.contains("debug models --bundled"));
     assert!(review_tool.contains("SANDRONE_CODEX_BIN"));
     assert!(review_tool.contains("SANDRONE_CODEX_APP"));
     assert!(review_tool.contains("resolve_codex_bin"));
@@ -676,11 +811,44 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(!review_tool.contains("cp \"$source_codex_home/config.toml\""));
     assert!(review_tool.contains("CODEX_HOME=\"$review_codex_home\" \"$codex_bin\" exec"));
     assert!(review_tool.contains("--output-last-message \"$review_output_file\""));
-    assert!(review_tool.contains("- 1>&2"));
+    assert!(review_tool.contains("- < \"$review_prompt_file\" 1>&2"));
     assert!(review_tool.contains("cat \"$review_output_file\""));
     assert!(!review_tool.contains("/Applications/Codex.app"));
     assert!(review_tool.contains("--ephemeral"));
+    assert!(review_tool.contains("--ignore-user-config"));
+    assert!(review_tool.contains("features.plugin_hooks=false"));
     assert!(review_tool.contains("--sandbox workspace-write"));
+    assert!(review_tool.contains(
+        "[ \"$review_backend\" = \"codex-cli\" ] || [ \"$review_backend\" = \"codex-api\" ]"
+    ));
+    let issue_agent =
+        fs::read_to_string(workspace.join("tools/issue-agent.sh")).expect("agent tool readable");
+    assert!(issue_agent.contains("SANDRONE_AGENT_BACKEND"));
+    assert!(issue_agent.contains("SANDRONE_DECOMPOSITION_AGENT_BACKEND"));
+    assert!(issue_agent.contains("SANDRONE_PLAN_AGENT_BACKEND"));
+    assert!(issue_agent.contains("SANDRONE_IMPLEMENTATION_AGENT_BACKEND"));
+    assert!(issue_agent.contains("codex-api"));
+    assert!(issue_agent.contains("model_provider"));
+    assert!(issue_agent.contains("model_providers."));
+    assert!(issue_agent.contains("SANDRONE_CODEX_WIRE_API"));
+    assert!(issue_agent.contains("SANDRONE_CODEX_MODEL_CATALOG_JSON"));
+    assert!(issue_agent.contains("model_catalog_json"));
+    assert!(issue_agent.contains(
+        "[ \"$agent_backend\" = \"codex-cli\" ] || [ \"$agent_backend\" = \"codex-api\" ]"
+    ));
+    let env_example =
+        fs::read_to_string(workspace.join(".env.example")).expect("workspace env example readable");
+    assert!(env_example.contains("SANDRONE_AGENT_BACKEND=codex-api"));
+    assert!(env_example.contains("SANDRONE_REVIEW_BACKEND=codex-cli"));
+    assert!(env_example.contains("SANDRONE_REVIEW_BACKEND=codex-api"));
+    assert!(env_example.contains("SANDRONE_REVIEW_BACKEND=claude-code"));
+    assert!(env_example.contains("LLM_API_KEY="));
+    assert!(env_example.contains("LLM_BASE_URL=https://api.openai.com/v1"));
+    assert!(env_example.contains("SANDRONE_CODEX_MODEL_PROVIDER=sandrone-api"));
+    assert!(env_example.contains("SANDRONE_CODEX_WIRE_API=responses"));
+    assert!(env_example.contains("SANDRONE_CODEX_MODEL_CATALOG_JSON="));
+    assert!(env_example.contains("SANDRONE_REVIEW_TIMEOUT_SECONDS=1800"));
+    assert!(env_example.contains("SANDRONE_AGENT_IGNORE_USER_CONFIG=1"));
     let test_review_prompt = fs::read_to_string(workspace.join("tools/prompts/test-reviewer.md"))
         .expect("test reviewer prompt readable");
     assert!(test_review_prompt.contains("## 独立评审边界"));
@@ -918,6 +1086,7 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
         &["decomposition-review", "--request_id", "REQ-0001"],
         &[("SANDRONE_HOME", registry_home_str)],
     ));
+    advance_until_not_review_running(&workspace_one, "REQ-0001");
 
     let change_path = workspace_one.join("obsidian/changes").join(&change_name);
     let slice_path = change_path.join("slices/S01");
@@ -945,6 +1114,23 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
         "{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"read design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}\n",
     )
     .expect("design review detail writable");
+    let worker_dir =
+        workspace_one.join(".sandrone/state/reviews/REQ-0001-S01/code-review/002/test-reviewer");
+    fs::create_dir_all(&worker_dir).expect("review worker state dir writable");
+    fs::write(worker_dir.join("pid"), format!("{}\n", std::process::id()))
+        .expect("review worker pid writable");
+    fs::write(
+        worker_dir.join("stdout.log"),
+        "TestReviewer is reading targeted tests\n",
+    )
+    .expect("review worker stdout writable");
+    fs::write(
+        worker_dir.join("stderr.log"),
+        "Codex reviewer progress is visible\n",
+    )
+    .expect("review worker stderr writable");
+    fs::write(worker_dir.join("hook.log"), "waiting for detail JSON\n")
+        .expect("review worker hook writable");
     fs::write(
         request_artifact_path(&slice_path, "REQ-0001-S01", "change-doc.md"),
         "# Change\n\n## 摘要\n\nSlice implementation。\n",
@@ -1038,6 +1224,10 @@ fn dashboard_json_lists_all_registered_workspaces_with_stage_files_and_review_at
     assert!(stdout.contains("\"review_attempts\""));
     assert!(stdout.contains("\"attempt\": 1"));
     assert!(stdout.contains("\"attempt\": 2"));
+    assert!(stdout.contains("\"runtime_status\": \"running\""));
+    assert!(stdout.contains("TestReviewer is reading targeted tests"));
+    assert!(stdout.contains("Codex reviewer progress is visible"));
+    assert!(stdout.contains("waiting for detail JSON"));
     assert!(stdout.contains("001-plan-reviewer.json"));
     assert!(stdout.contains("002-plan-reviewer.json"));
     assert!(stdout.contains("TestReviewer"));
@@ -1196,8 +1386,10 @@ fn update_deduplicates_by_external_id_and_assigns_request_ids() {
     assert!(request.contains("First request"));
     assert!(request.contains("## 需求描述"));
     assert!(request.contains("Detailed body line one\nline two"));
-    assert!(plan.contains("当前需求正文如下"));
-    assert!(plan.contains("Detailed body line one\nline two"));
+    assert!(plan.contains("本计划模板不内嵌需求正文或摘要"));
+    assert!(plan.contains("- 需求记录:"));
+    assert!(!plan.contains("Detailed body line one\nline two"));
+    assert!(!plan.contains("Detailed body line one line two"));
 }
 
 #[test]
@@ -1323,9 +1515,10 @@ fn plan_creates_only_templates_for_codex_to_fill() {
     assert!(plan.contains("- Source: `manual`"));
     assert!(plan.contains("### 需求名称"));
     assert!(plan.contains("### 需求描述索引"));
-    assert!(plan.contains("当前需求正文如下"));
-    assert!(plan.contains("本文件同时是 slice request 与 plan"));
-    assert!(plan.contains("planning agent 可以重写正文，但必须保留并更新上面的规范化需求记录"));
+    assert!(plan.contains("本计划模板不内嵌需求正文或摘要"));
+    assert!(plan.contains("- 父需求记录: not-applicable"));
+    assert!(plan.contains("- Slice 元数据: not-applicable"));
+    assert!(plan.contains("如果这是 slice，本文件同时是 slice request 与 plan"));
     assert!(plan.contains("目标项目内部要求"));
     assert!(!plan.contains("执行任务清单"));
     assert!(plan.contains("pre-commit"));
@@ -1529,11 +1722,20 @@ fn decompose_creates_slice_artifacts_obsidian_note_and_gate() {
         &workspace,
         &["decomposition-review", "--request_id", "REQ-0001"],
     ));
-    let status =
-        fs::read_to_string(change_path.join("status.json")).expect("status should be readable");
-    assert!(status.contains("\"gate\": \"decomposition\""));
-    assert!(status.contains("\"status\": \"approved\""));
+    advance_until_not_review_running(&workspace, "REQ-0001");
+    let decomposition_doc = fs::read_to_string(request_artifact_path(
+        &change_path,
+        "REQ-0001",
+        "decomposition.md",
+    ))
+    .expect("decomposition gate should be readable");
+    assert!(decomposition_doc.contains("gate_name: decomposition"));
+    assert!(decomposition_doc.contains("gate_status: approved"));
     assert!(!change_path.join("approvals").exists());
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        "REQ-0001-S01",
+    );
     let state =
         fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).expect("state readable");
     assert!(state.contains("REQ-0001-S01"));
@@ -1639,6 +1841,78 @@ fn decompose_creates_slice_artifacts_obsidian_note_and_gate() {
         );
     }
     assert_no_archived_entries(&slice_path);
+}
+
+#[test]
+fn slice_plan_template_references_parent_request_without_inlining_long_body() {
+    let workspace = temp_workspace("slice-plan-short");
+    let change_name = format!("{}-slice-plan-short", current_date());
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "slice-plan-short-test"],
+    ));
+    let long_body = format!(
+        "LONG_PARENT_BODY_MARKER {}",
+        "large parent requirement body ".repeat(300)
+    );
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        format!(
+            "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tLarge parent request\\t{}\\thttps://example.test/1\\n'\n",
+            long_body
+        ),
+    )
+    .expect("issue connector should be writable");
+    assert_success(&run(&workspace, &["update"]));
+    assert_success(&run(
+        &workspace,
+        &[
+            "decompose",
+            "--name",
+            &change_name,
+            "--request_id",
+            "REQ-0001",
+        ],
+    ));
+    let change_path = workspace.join("obsidian/changes").join(&change_name);
+    fs::write(
+        change_path.join("decomposition.json"),
+        r#"{"schema_version":1,"request_id":"REQ-0001","kind":"request_decomposition","classification":{"slice_strategy":"single-or-dag"},"slices":[{"id":"S01","name":"small-slice","status":"draft","type":"feature","summary":"Small slice summary only","depends_on":[],"parallel_group":"main","conflict_domains":[],"inputs":[],"outputs":[],"acceptance":["done"],"tests":["covered"],"docs":[],"branch":"codex/req-0001-s01-small-slice","worktree":""}],"global_invariants":[],"updated_at":"test"}"#,
+    )
+    .expect("decomposition json writable");
+    fs::write(
+        change_path.join("dag.json"),
+        r#"{"schema_version":1,"request_id":"REQ-0001","nodes":[{"id":"S01","name":"small-slice","status":"draft","depends_on":[],"parallel_group":"main","conflict_domains":[],"branch":"codex/req-0001-s01-small-slice","worktree":""}],"edges":[],"parallel_policy":{"max_parallel_slices":1,"respect_conflict_domains":true},"updated_at":"test"}"#,
+    )
+    .expect("dag json writable");
+    install_passing_decomposition_review_tool(&workspace);
+    assert_success(&run(
+        &workspace,
+        &[
+            "submit",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "decomposition",
+        ],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["decomposition-review", "--request_id", "REQ-0001"],
+    ));
+    advance_until_not_review_running(&workspace, "REQ-0001");
+
+    let slice_plan_path = change_path.join("slices/S01").join("REQ-0001-S01 plan.md");
+    wait_for_file(&slice_plan_path);
+    let slice_plan = fs::read_to_string(slice_plan_path).expect("slice plan should be readable");
+    assert!(slice_plan.contains("- 父需求记录: obsidian/changes/"));
+    assert!(slice_plan.contains("- Slice 元数据: obsidian/changes/"));
+    assert!(slice_plan.contains("- DAG: obsidian/changes/"));
+    assert!(!slice_plan.contains("Small slice summary only"));
+    assert!(
+        !slice_plan.contains("LONG_PARENT_BODY_MARKER"),
+        "slice plan template should not inline the full parent issue body"
+    );
 }
 
 #[test]
@@ -1989,17 +2263,16 @@ fn finish_requires_change_doc_approval_then_commits_and_pushes_request_branch() 
     assert!(pr_body.contains("保留平台中立 PR contract"));
     assert!(pr_body.contains("后续 GitLab 或内部系统可以复用同一个 finish 流程"));
 
-    let gate_status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(change_name)
-            .join("status.json"),
-    )
-    .expect("status gate records should be readable");
-    assert!(gate_status.contains("\"gate\": \"change-doc\""));
-    assert!(gate_status.contains("\"status\": \"approved\""));
-    assert!(gate_status.contains("\"artifact_sha256\""));
-    assert!(gate_status.contains("变更文档已检查"));
+    let change_doc_gate = fs::read_to_string(request_artifact_path(
+        &workspace.join("obsidian/changes").join(change_name),
+        "REQ-0001",
+        "change-doc.md",
+    ))
+    .expect("change-doc gate frontmatter should be readable");
+    assert!(change_doc_gate.contains("gate_name: change-doc"));
+    assert!(change_doc_gate.contains("gate_status: approved"));
+    assert!(change_doc_gate.contains("gate_body_sha256:"));
+    assert!(change_doc_gate.contains("变更文档已检查"));
 
     let pending_check = run(&workspace, &["pr-status", "--request_id", "REQ-0001"]);
     assert_success(&pending_check);
@@ -2286,7 +2559,8 @@ fn review_gates_require_structured_passes_before_start_and_change_doc_approval()
     )
     .expect("plan review connector should be writable");
     let rejected_plan_review = run(&workspace, &["plan-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&rejected_plan_review, "PlanReviewer rejected");
+    assert_success(&rejected_plan_review);
+    advance_until_not_review_running(&workspace, "REQ-0001");
     let plan_review_path = workspace
         .join("obsidian/changes")
         .join(&change_name)
@@ -2302,25 +2576,53 @@ fn review_gates_require_structured_passes_before_start_and_change_doc_approval()
         "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"plan is implementation-grade\",\"process\":[\"read issue\",\"read plan\",\"read repo\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[{\"title\":\"minor follow-up\",\"evidence\":\"plan could add one follow-up note\",\"impact\":\"non-blocking documentation clarity improvement\",\"required_fix\":\"optional follow-up only\",\"suggested_change\":\"Optionally add a short follow-up note after implementation scope.\",\"verification\":\"No gate rerun required unless the plan text is changed materially.\"}]}'\n",
     )
     .expect("plan review connector should be writable");
-    assert_success(&run(
-        &workspace,
-        &["plan-review", "--request_id", "REQ-0001"],
-    ));
-    let status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(&change_name)
-            .join("status.json"),
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        r#"#!/usr/bin/env sh
+set -eu
+if [ "${SANDRONE_AGENT_PHASE:-}" != "implementation" ]; then
+  echo "unexpected phase: ${SANDRONE_AGENT_PHASE:-}" >&2
+  exit 1
+fi
+printf 'implemented\n' > "$SANDRONE_WORKTREE/feature.txt"
+cat > "$SANDRONE_CHANGE_DOC" <<EOF
+---
+sandrone_schema: 1
+request_id: $SANDRONE_REQUEST_ID
+document_type: change-doc
+agent_phase: implementation
+agent_status: submitted
+agent_ready_for_review: true
+format_check_status: passed
+format_check_exit_code: 0
+updated_at: test
+---
+
+# 变更文档
+
+## 摘要
+
+已实现。
+
+## 实现前后对比
+
+已记录。
+
+## 关键设计点
+
+已记录。
+
+## 验证证据
+
+测试通过。
+
+## Review 结果
+
+等待汇总。
+EOF
+"#,
     )
-    .expect("status should be readable");
-    assert!(status.contains("\"gate\": \"plan\""));
-    assert!(status.contains("\"status\": \"approved\""));
-    assert!(status.contains("PlanReviewer"));
-
-    assert_success(&run(&workspace, &["start", "--request_id", "REQ-0001"]));
-    let worktree = workspace.join("dev/worktrees/REQ-0001");
-    fs::write(worktree.join("feature.txt"), "implemented\n").expect("feature should be writable");
-
+    .expect("issue agent connector should be writable");
     fs::write(
         workspace.join("tools/test-review.sh"),
         "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests are sufficient\",\"process\":[\"checked diff\",\"checked tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
@@ -2331,8 +2633,21 @@ fn review_gates_require_structured_passes_before_start_and_change_doc_approval()
         "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"implementation\",\"summary\":\"implementation hardcodes behavior\",\"process\":[\"checked approved plan\",\"checked diff\"],\"critical\":[],\"high\":[{\"title\":\"hardcoded behavior\",\"evidence\":\"feature.txt hardcodes behavior\",\"impact\":\"future requests cannot reuse or configure the behavior safely\",\"required_fix\":\"replace hardcoded behavior with extensible implementation\",\"suggested_change\":\"Move the hardcoded value into configuration or derive it from request/repository state following the approved plan.\",\"verification\":\"Add or update a test that exercises a non-default value and rerun code-review.\"}],\"warning\":[],\"info\":[]}'\n",
     )
     .expect("design review connector should be writable");
-    let rejected_code_review = run(&workspace, &["code-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&rejected_code_review, "DesignReviewer rejected");
+    assert_success(&run(
+        &workspace,
+        &["plan-review", "--request_id", "REQ-0001"],
+    ));
+    advance_until_request_state_contains(&workspace, "REQ-0001", "code-review-rejected");
+    let plan_doc = fs::read_to_string(request_artifact_path(
+        &workspace.join("obsidian/changes").join(&change_name),
+        "REQ-0001",
+        "plan.md",
+    ))
+    .expect("plan doc should be readable");
+    assert!(plan_doc.contains("gate_name: plan"));
+    assert!(plan_doc.contains("gate_status: approved"));
+    assert!(plan_doc.contains("PlanReviewer"));
+
     let rejected_finish_after_review = run(&workspace, &["finish", "--request_id", "REQ-0001"]);
     assert_failure_contains(
         &rejected_finish_after_review,
@@ -2348,16 +2663,16 @@ fn review_gates_require_structured_passes_before_start_and_change_doc_approval()
         &workspace,
         &["code-review", "--request_id", "REQ-0001"],
     ));
-    let status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(&change_name)
-            .join("status.json"),
-    )
-    .expect("status should be readable");
-    assert!(status.contains("\"gate\": \"change-doc\""));
-    assert!(status.contains("\"status\": \"approved\""));
-    assert!(status.contains("code-review"));
+    advance_until_request_state_contains(&workspace, "REQ-0001", "wait-update-pr");
+    let change_doc_gate = fs::read_to_string(request_artifact_path(
+        &workspace.join("obsidian/changes").join(&change_name),
+        "REQ-0001",
+        "change-doc.md",
+    ))
+    .expect("change-doc gate frontmatter should be readable");
+    assert!(change_doc_gate.contains("gate_name: change-doc"));
+    assert!(change_doc_gate.contains("gate_status: approved"));
+    assert!(change_doc_gate.contains("code-review"));
     assert!(
         workspace
             .join("obsidian/changes")
@@ -2382,6 +2697,106 @@ fn review_gates_require_structured_passes_before_start_and_change_doc_approval()
     assert!(change_doc.contains("PlanReviewer"));
     assert!(change_doc.contains("TestReviewer"));
     assert!(change_doc.contains("DesignReviewer"));
+}
+
+#[test]
+fn review_worker_exit_without_detail_blocks_instead_of_waiting_forever() {
+    let workspace = temp_workspace("review-worker-missing-detail");
+    let change_name = format!("{}-missing-review-detail", current_date());
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "review-worker-missing-detail-test"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
+    ));
+
+    let state_path = workspace.join(".sandrone/state/requests.tsv");
+    let state = fs::read_to_string(&state_path).expect("request state readable");
+    assert!(state.contains("\tplan-submitted\t"));
+    fs::write(
+        &state_path,
+        state.replace("\tplan-submitted\t", "\tplan-review-running\t"),
+    )
+    .expect("request state writable");
+
+    let job_dir = workspace.join(".sandrone/state/reviews/REQ-0001/plan-review/001/plan-reviewer");
+    fs::create_dir_all(&job_dir).expect("review worker state dir writable");
+    fs::write(job_dir.join("exit"), "1\n").expect("review worker exit writable");
+    fs::write(job_dir.join("stdout.log"), "").expect("review worker stdout writable");
+    fs::write(job_dir.join("stderr.log"), "worker crashed before detail\n")
+        .expect("review worker stderr writable");
+
+    let advance = run(&workspace, &["advance", "--request_id", "REQ-0001"]);
+    assert_success(&advance);
+
+    let final_state = fs::read_to_string(&state_path).expect("request state readable");
+    assert!(final_state.contains("\tblocked\t"));
+    let detail = fs::read_to_string(
+        workspace
+            .join("obsidian/changes")
+            .join(&change_name)
+            .join("reviews/plan-review/details/001-plan-reviewer.json"),
+    )
+    .expect("fallback detail should be written");
+    assert!(detail.contains("review worker failed"));
+    assert!(detail.contains("exited with code 1 before writing detail JSON"));
+    assert!(detail.contains("\"gate_unavailable\": true"));
+}
+
+#[test]
+fn review_worker_streams_reviewer_tool_output_to_runtime_logs() {
+    let workspace = temp_workspace("review-worker-streams-output");
+    let change_name = format!("{}-review-worker-streams-output", current_date());
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "review-worker-streams-output-test"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
+    ));
+    fs::write(
+        workspace.join("tools/plan-review.sh"),
+        "#!/usr/bin/env sh\nprintf 'live reviewer stderr before JSON\\n' >&2\nprintf '{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"plan ok\",\"process\":[\"checked plan\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("plan review connector should be writable");
+
+    let review = run(&workspace, &["plan-review", "--request_id", "REQ-0001"]);
+    assert_success(&review);
+    let stderr_log =
+        workspace.join(".sandrone/state/reviews/REQ-0001/plan-review/001/plan-reviewer/stderr.log");
+    wait_for_file_contains(&stderr_log, "live reviewer stderr before JSON");
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/jobs/REQ-0001/plan-review/001/plan-reviewer/stderr.log"),
+        "live reviewer stderr before JSON",
+    );
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/jobs/REQ-0001/plan-review/001/plan-reviewer/events.log"),
+        "review-tool-started",
+    );
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/jobs/REQ-0001/plan-review/001/plan-reviewer/events.log"),
+        "review-tool-exited",
+    );
+    advance_until_not_review_running(&workspace, "REQ-0001");
+    let detail = fs::read_to_string(
+        workspace
+            .join("obsidian/changes")
+            .join(&change_name)
+            .join("reviews/plan-review/details/001-plan-reviewer.json"),
+    )
+    .expect("plan review detail should be written");
+    assert!(detail.contains("\"approved\":true") || detail.contains("\"approved\": true"));
 }
 
 #[test]
@@ -2451,14 +2866,24 @@ esac
         .expect("state should be readable");
     assert!(state.contains("code-review-rejected"));
     let change_path = workspace.join("obsidian/changes").join(&change_name);
-    let check_record =
-        fs::read_to_string(change_path.join("checks/format-check.md")).expect("record readable");
-    assert!(check_record.contains("cargo fmt --check failed"));
-    assert!(check_record.contains("exit code: 42"));
+    assert!(
+        !change_path.join("checks/format-check.md").exists(),
+        "format check should not create a separate markdown record"
+    );
+    let change_doc = fs::read_to_string(request_artifact_path(
+        &change_path,
+        "REQ-0001",
+        "change-doc.md",
+    ))
+    .expect("change doc readable");
+    assert!(change_doc.contains("format_check_status: failed"));
+    assert!(change_doc.contains("format_check_exit_code: 42"));
+    assert!(!change_doc.contains("format_check_record"));
     let status = fs::read_to_string(change_path.join("status.json")).expect("status readable");
     assert!(status.contains("format check failed before code-review"));
-    assert!(status.contains("checks/format-check.md"));
-    assert!(status.contains("\"format_check\""));
+    assert!(status.contains("cargo fmt --check failed"));
+    assert!(status.contains("exit_code=42"));
+    assert!(!status.contains("\"format_check\""));
 }
 
 #[test]
@@ -2523,6 +2948,18 @@ if [ -e "$SANDRONE_CHANGE_PATH/reviews" ]; then
   echo "historical review output leaked into TestReviewer context" >&2
   exit 3
 fi
+if [ ! -f "$SANDRONE_REVIEW_CONTEXT/artifact-index.md" ]; then
+  echo "artifact index was not generated" >&2
+  exit 5
+fi
+if [ -e "$SANDRONE_REVIEW_CONTEXT/plan.md" ] || [ -e "$SANDRONE_REVIEW_CONTEXT/change-doc.md" ]; then
+  echo "large artifacts were copied into lightweight review context" >&2
+  exit 6
+fi
+case "$(cat "$SANDRONE_REVIEW_CONTEXT/artifact-index.md")" in
+  *"Plan:"*"Change doc:"*"Recommended"*|*"Plan:"*"Change doc:"*"推荐读取顺序"*) ;;
+  *) echo "artifact index does not include key paths and reading order" >&2; exit 7 ;;
+esac
 case "${SANDRONE_REVIEW_FORBIDDEN_PATHS:-}" in
   *reviews/code-review*) ;;
   *) echo "forbidden review paths were not declared" >&2; exit 4 ;;
@@ -2543,6 +2980,14 @@ if [ -e "$SANDRONE_CHANGE_PATH/reviews" ]; then
   echo "TestReviewer or historical output leaked into DesignReviewer context" >&2
   exit 3
 fi
+if [ ! -f "$SANDRONE_REVIEW_CONTEXT/artifact-index.md" ]; then
+  echo "artifact index was not generated" >&2
+  exit 5
+fi
+if [ -e "$SANDRONE_REVIEW_CONTEXT/plan.md" ] || [ -e "$SANDRONE_REVIEW_CONTEXT/change-doc.md" ]; then
+  echo "large artifacts were copied into lightweight review context" >&2
+  exit 6
+fi
 case "${SANDRONE_REVIEW_FORBIDDEN_PATHS:-}" in
   *reviews/code-review*) ;;
   *) echo "forbidden review paths were not declared" >&2; exit 4 ;;
@@ -2554,6 +2999,7 @@ printf '{"reviewer":"DesignReviewer","approved":true,"gate_unavailable":false,"d
 
     let review = run(&workspace, &["code-review", "--request_id", "REQ-0001"]);
     assert_success(&review);
+    advance_until_not_review_running(&workspace, "REQ-0001");
     assert!(
         change_path
             .join("reviews/code-review/details/002-test-reviewer.json")
@@ -2605,47 +3051,67 @@ fn advance_syncs_stale_request_index_from_status_json_before_reviewing() {
     ));
     assert_success(&run(
         &workspace,
-        &["plan-review", "--request_id", "REQ-0001"],
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "plan",
+            "--by",
+            "tester",
+        ],
     ));
     assert_success(&run(&workspace, &["start", "--request_id", "REQ-0001"]));
     assert_success(&run(
         &workspace,
         &["submit", "--request_id", "REQ-0001", "--gate", "change-doc"],
     ));
-    let status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(&change_name)
-            .join("status.json"),
-    )
-    .expect("status json should be readable");
+    let change_path = workspace.join("obsidian/changes").join(&change_name);
+    let status = fs::read_to_string(change_path.join("status.json"))
+        .expect("status json should be readable");
     assert!(status.contains("\"status\": \"change-doc-submitted\""));
-    assert!(status.contains("\"gate\": \"plan\""));
+    let plan_doc = fs::read_to_string(request_artifact_path(&change_path, "REQ-0001", "plan.md"))
+        .expect("plan gate should be readable");
+    assert!(plan_doc.contains("gate_name: plan"));
+    assert!(plan_doc.contains("gate_status: approved"));
 
-    let review_log_before = fs::read_to_string(workspace.join(".sandrone/state/review.log"))
-        .expect("review log readable");
-    assert_eq!(review_log_before.matches("plan-review").count(), 1);
+    let review_log_before =
+        fs::read_to_string(workspace.join(".sandrone/state/review.log")).unwrap_or_default();
+    assert_eq!(review_log_before.matches("plan-review").count(), 0);
+    let dispatch_log_before =
+        fs::read_to_string(workspace.join(".sandrone/state/agent-dispatch.log"))
+            .unwrap_or_default();
+    let dispatch_count_before = dispatch_log_before
+        .matches("implementation dispatched")
+        .count();
     force_request_state(&workspace, "REQ-0001", "plan-submitted", "", "");
 
     let advance = run(&workspace, &["advance", "--request_id", "REQ-0001"]);
     assert_success(&advance);
-    let stdout = String::from_utf8_lossy(&advance.stdout);
-    assert!(stdout.contains("Advance complete for REQ-0001"));
+    advance_until_not_review_running(&workspace, "REQ-0001");
 
     let review_log = fs::read_to_string(workspace.join(".sandrone/state/review.log"))
         .expect("review log readable");
     assert_eq!(
         review_log.matches("plan-review").count(),
-        1,
+        0,
         "advance must not rerun plan-review when status.json is already change-doc-submitted"
     );
     assert!(review_log.contains("test-review"));
     assert!(review_log.contains("design-review"));
-    assert!(
-        !workspace
-            .join(".sandrone/state/agent-dispatch.log")
-            .exists(),
+    let dispatch_log_after =
+        fs::read_to_string(workspace.join(".sandrone/state/agent-dispatch.log"))
+            .unwrap_or_default();
+    assert_eq!(
+        dispatch_log_after
+            .matches("implementation dispatched")
+            .count(),
+        dispatch_count_before,
         "advance must not dispatch a duplicate implementation agent"
+    );
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        "wait-update-pr",
     );
     let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
         .expect("requests state readable");
@@ -2752,8 +3218,8 @@ fn review_gate_backend_failure_blocks_request_with_diagnostics() {
     .expect("plan review connector should be writable");
 
     let failed_review = run(&workspace, &["plan-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&failed_review, "PlanReviewer review gate unavailable");
-    assert_failure_contains(&failed_review, "backend offline");
+    assert_success(&failed_review);
+    advance_until_not_review_running(&workspace, "REQ-0001");
 
     let change_path = workspace.join("obsidian/changes").join(&change_name);
     let detail = fs::read_to_string(
@@ -2799,7 +3265,8 @@ fn review_gate_rejects_legacy_json_missing_required_schema_fields() {
     .expect("plan review connector should be writable");
 
     let failed_review = run(&workspace, &["plan-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&failed_review, "PlanReviewer review gate unavailable");
+    assert_success(&failed_review);
+    advance_until_not_review_running(&workspace, "REQ-0001");
 
     let change_path = workspace.join("obsidian/changes").join(&change_name);
     let detail = fs::read_to_string(
@@ -2835,7 +3302,8 @@ fn review_gate_rejects_findings_without_detailed_modification_advice() {
     .expect("plan review connector should be writable");
 
     let failed_review = run(&workspace, &["plan-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&failed_review, "PlanReviewer review gate unavailable");
+    assert_success(&failed_review);
+    advance_until_not_review_running(&workspace, "REQ-0001");
 
     let change_path = workspace.join("obsidian/changes").join(&change_name);
     let detail = fs::read_to_string(
@@ -2880,7 +3348,9 @@ fn approval_becomes_stale_when_artifact_changes_after_approval() {
         .join("obsidian/changes")
         .join(change_name)
         .join("REQ-0001 plan.md");
-    fs::write(&plan_path, "# Plan\n\n审批后被修改。\n").expect("plan should be writable");
+    let approved_plan = fs::read_to_string(&plan_path).expect("plan should be readable");
+    fs::write(&plan_path, format!("{approved_plan}\n\n审批后被修改。\n"))
+        .expect("plan should be writable");
 
     let rejected_start = run(&workspace, &["start", "--request_id", "REQ-0001"]);
     assert_failure_contains(&rejected_start, "gate approval is stale");
@@ -2954,10 +3424,31 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
         .join("approvals");
     fs::create_dir_all(&legacy_approvals_dir).expect("legacy approvals dir should be writable");
     fs::write(
-        legacy_approvals_dir.join("plan.approval.json"),
-        "{\"status\":\"approved\",\"artifact\":\"legacy-plan.md\",\"artifact_sha256\":\"legacy-hash\",\"updated_at\":\"2026-05-31T00:00:00Z\"}\n",
+        legacy_approvals_dir.join("decomposition.approval.json"),
+        "{\"status\":\"approved\",\"artifact\":\"legacy-decomposition.md\",\"artifact_sha256\":\"legacy-hash\",\"updated_at\":\"2026-05-31T00:00:00Z\"}\n",
     )
     .expect("legacy approval record should be writable");
+    let success_marker = workspace.join(".sandrone/state/agents/REQ-0001.success");
+    fs::create_dir_all(
+        success_marker
+            .parent()
+            .expect("success marker should have parent"),
+    )
+    .expect("agents dir should be writable");
+    fs::write(
+        &success_marker,
+        "status=success\nrequest_id=REQ-0001\nphase=planning\n",
+    )
+    .expect("legacy success marker should be writable");
+    let decomposition_path = workspace
+        .join("obsidian/changes")
+        .join(&change_name)
+        .join("REQ-0001 decomposition.md");
+    fs::write(
+        &decomposition_path,
+        "# Legacy Decomposition\n\nA decomposition document without Sandrone frontmatter.\n",
+    )
+    .expect("legacy decomposition should be writable");
     fs::write(
         workspace.join("tools/issue-update.sh"),
         "#!/usr/bin/env sh\nprintf 'custom connector\\n'\n",
@@ -2984,6 +3475,8 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
         dry_run_stdout.contains("Would refresh tools/schemas/review-result.example.schema.json")
     );
     assert!(dry_run_stdout.contains("Would remove"));
+    assert!(dry_run_stdout.contains("Would remove obsolete agent success marker"));
+    assert!(dry_run_stdout.contains("Would normalize document status"));
     assert!(dry_run_stdout.contains("不会替换正式 connector、prompt 或 review schema"));
     assert!(dry_run_stdout.contains("sandrone upgrade --default"));
 
@@ -3001,16 +3494,21 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
             .join("approvals")
             .exists()
     );
+    assert!(
+        !success_marker.exists(),
+        "upgrade should remove obsolete agent success marker files"
+    );
+    let normalized_decomposition = fs::read_to_string(&decomposition_path)
+        .expect("normalized decomposition should be readable");
+    assert!(normalized_decomposition.contains("sandrone_schema: 1"));
+    assert!(normalized_decomposition.contains("request_id: REQ-0001"));
+    assert!(normalized_decomposition.contains("agent_phase: decomposition"));
+    assert!(normalized_decomposition.contains("agent_status: submitted"));
+    assert!(normalized_decomposition.contains("agent_ready_for_review: true"));
+    assert!(normalized_decomposition.contains("gate_name: decomposition"));
+    assert!(normalized_decomposition.contains("gate_status: approved"));
+    assert!(normalized_decomposition.contains("gate_source: legacy-gate-migration"));
     assert_no_archived_entries(&workspace.join("obsidian/changes").join(&change_name));
-    let migrated_status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(&change_name)
-            .join("status.json"),
-    )
-    .expect("migrated status should be readable");
-    assert!(migrated_status.contains("\"gate\": \"plan\""));
-    assert!(migrated_status.contains("\"source\": \"legacy-gate-migration\""));
     let issue_tool =
         fs::read_to_string(workspace.join("tools/issue-update.sh")).expect("tool readable");
     assert!(issue_tool.contains("custom connector"));
@@ -3238,6 +3736,84 @@ sleep 1
 }
 
 #[test]
+fn tick_dispatches_ready_slice_when_parent_request_is_first_candidate() {
+    let workspace = temp_workspace("tick-parent-slice");
+    let change_name = format!("{}-parent-slice", current_date());
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "tick-parent-slice-test"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "decompose",
+            "--name",
+            &change_name,
+            "--request_id",
+            "REQ-0001",
+        ],
+    ));
+    let change_path = workspace.join("obsidian/changes").join(&change_name);
+    fs::write(
+        change_path.join("decomposition.json"),
+        r#"{"schema_version":1,"request_id":"REQ-0001","kind":"request_decomposition","classification":{"slice_strategy":"serial-dag"},"slices":[{"id":"S01","name":"foundation","status":"draft","type":"feature","summary":"first slice","depends_on":[],"parallel_group":"serial-01","conflict_domains":[],"inputs":[],"outputs":[],"acceptance":["done"],"tests":["covered"],"docs":[],"branch":"codex/req-0001-s01-foundation","worktree":""},{"id":"S02","name":"follow-up","status":"draft","type":"feature","summary":"second slice","depends_on":["S01"],"parallel_group":"serial-02","conflict_domains":[],"inputs":[],"outputs":[],"acceptance":["done"],"tests":["covered"],"docs":[],"branch":"codex/req-0001-s02-follow-up","worktree":""}],"global_invariants":[],"updated_at":"test"}"#,
+    )
+    .expect("decomposition json writable");
+    fs::write(
+        change_path.join("dag.json"),
+        r#"{"schema_version":1,"request_id":"REQ-0001","nodes":[{"id":"S01","name":"foundation","status":"draft","depends_on":[],"parallel_group":"serial-01","conflict_domains":[],"branch":"codex/req-0001-s01-foundation","worktree":""},{"id":"S02","name":"follow-up","status":"draft","depends_on":["S01"],"parallel_group":"serial-02","conflict_domains":[],"branch":"codex/req-0001-s02-follow-up","worktree":""}],"edges":[{"from":"S01","to":"S02","reason":"test serial dependency"}],"parallel_policy":{"max_parallel_slices":1,"respect_conflict_domains":true},"updated_at":"test"}"#,
+    )
+    .expect("dag json writable");
+    install_passing_decomposition_review_tool(&workspace);
+    assert_success(&run(
+        &workspace,
+        &[
+            "submit",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "decomposition",
+        ],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["decomposition-review", "--request_id", "REQ-0001"],
+    ));
+    advance_until_not_review_running(&workspace, "REQ-0001");
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        "REQ-0001-S02",
+    );
+    force_request_state(&workspace, "REQ-0001-S01", "slice-finished", "", "");
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\n",
+    )
+    .expect("issue update connector should be writable");
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        r#"#!/usr/bin/env sh
+set -eu
+printf 'agent called for %s phase=%s\n' "$SANDRONE_REQUEST_ID" "$SANDRONE_AGENT_PHASE" >> .sandrone/state/agent.log
+sleep 1
+"#,
+    )
+    .expect("issue agent should be writable");
+
+    let output = run(&workspace, &["tick", "--max-attempts", "20"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Dispatched REQ-0001-S02"),
+        "tick should dispatch the ready child slice instead of spending the only slot on the parent\nstdout:\n{stdout}"
+    );
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/agent.log"),
+        "agent called for REQ-0001-S02 phase=planning",
+    );
+}
+
+#[test]
 fn tick_rejects_invalid_parallel_limit_without_panic() {
     let workspace = temp_workspace("tick-invalid-parallel");
     assert_success(&run(
@@ -3360,6 +3936,23 @@ esac
         ),
     )
     .expect("issue agent should be writable");
+    fs::create_dir_all(workspace.join(".sandrone/state/agents"))
+        .expect("agents state dir should be writable");
+    fs::write(
+        workspace.join(".sandrone/state/agents/REQ-0001.hook.log"),
+        "stale hook line\n",
+    )
+    .expect("stale hook log should be writable");
+    fs::write(
+        workspace.join(".sandrone/state/agents/REQ-0001.stdout.log"),
+        "stale stdout line\n",
+    )
+    .expect("stale stdout log should be writable");
+    fs::write(
+        workspace.join(".sandrone/state/agents/REQ-0001.stderr.log"),
+        "stale stderr line\n",
+    )
+    .expect("stale stderr log should be writable");
 
     let output = run(&workspace, &["tick", "--max-attempts", "20"]);
     assert_success(&output);
@@ -3486,15 +4079,423 @@ esac
         .expect("one change should exist")
         .expect("change entry should be readable")
         .path();
-    let slice_status = fs::read_to_string(change_dir.join("slices/S01/status.json"))
-        .expect("slice status should be readable");
-    assert!(slice_status.contains("\"gate\": \"change-doc\""));
-    assert!(slice_status.contains("\"status\": \"approved\""));
+    let slice_change_doc = fs::read_to_string(
+        change_dir
+            .join("slices/S01")
+            .join("REQ-0001-S01 change-doc.md"),
+    )
+    .expect("slice change-doc gate should be readable");
+    assert!(slice_change_doc.contains("gate_name: change-doc"));
+    assert!(slice_change_doc.contains("gate_status: approved"));
     assert!(
         workspace
             .join(".sandrone/state/agents/REQ-0001.hook.log")
             .is_file()
     );
+    let hook_log = fs::read_to_string(workspace.join(".sandrone/state/agents/REQ-0001.hook.log"))
+        .expect("hook log should be readable");
+    assert!(!hook_log.contains("stale hook line"));
+    let stdout_log =
+        fs::read_to_string(workspace.join(".sandrone/state/agents/REQ-0001.stdout.log"))
+            .expect("stdout log should be readable");
+    assert!(!stdout_log.contains("stale stdout line"));
+    let stderr_log =
+        fs::read_to_string(workspace.join(".sandrone/state/agents/REQ-0001.stderr.log"))
+            .expect("stderr log should be readable");
+    assert!(!stderr_log.contains("stale stderr line"));
+}
+
+#[test]
+fn agent_nonzero_exit_with_document_status_advances_to_review() {
+    let workspace = temp_workspace("agent-document-status");
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "agent-document-status-test"],
+    ));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\ttest\tMarker request\tBody from issue\thttps://example.test/1\n'\n",
+    )
+    .expect("issue connector should be writable");
+    install_passing_decomposition_review_tool(&workspace);
+    fs::write(
+        workspace.join("tools/plan-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"plan ok\",\"process\":[\"checked plan\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("plan review connector should be writable");
+    fs::write(
+        workspace.join("tools/test-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests ok\",\"process\":[\"checked tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("test review connector should be writable");
+    fs::write(
+        workspace.join("tools/design-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"checked design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("design review connector should be writable");
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        format!(
+            r#"#!/usr/bin/env sh
+set -eu
+printf 'agent called for %s phase=%s\n' "$SANDRONE_REQUEST_ID" "$SANDRONE_AGENT_PHASE" >> .sandrone/state/agent.log
+case "$SANDRONE_AGENT_PHASE" in
+{}
+  planning)
+    printf '# 计划\n\n## 规范化需求记录\n\n保留。\n\n## 需求理解\n\n已填写。\n\n## 测试与验证\n\n已规划。\n' > "$SANDRONE_PLAN"
+    printf '\n## document status - planning\n- 填写计划。\n' >> "$SANDRONE_AGENT_JOURNAL"
+    ;;
+  implementation)
+    printf 'implemented\n' > "$SANDRONE_WORKTREE/feature.txt"
+    cat > "$SANDRONE_CHANGE_DOC" <<EOF
+---
+sandrone_schema: 1
+request_id: $SANDRONE_REQUEST_ID
+document_type: change-doc
+agent_phase: implementation
+agent_status: submitted
+agent_ready_for_review: true
+format_check_status: passed
+format_check_exit_code: 0
+updated_at: test
+---
+
+# 变更文档
+
+## 摘要
+
+已实现。
+
+## 实现前后对比
+
+已记录。
+
+## 关键设计点
+
+已记录。
+
+## 验证证据
+
+测试通过。
+
+## Review 结果
+
+等待汇总。
+EOF
+    printf '\n## document status - implementation\n- 完成实现。\n' >> "$SANDRONE_AGENT_JOURNAL"
+    exit 1
+    ;;
+  *)
+    echo "unexpected phase: $SANDRONE_AGENT_PHASE" >&2
+    exit 1
+    ;;
+esac
+"#,
+            decomposition_agent_case()
+        ),
+    )
+    .expect("issue agent should be writable");
+
+    let output = run(&workspace, &["tick", "--max-attempts", "20"]);
+    assert_success(&output);
+
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/agent.log"),
+        "agent called for REQ-0001-S01 phase=implementation",
+    );
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        "wait-update-pr",
+    );
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(!state.contains("blocked"));
+    let exit_code = fs::read_to_string(workspace.join(".sandrone/state/agents/REQ-0001-S01.exit"))
+        .expect("agent exit should be readable");
+    assert_eq!(exit_code.trim(), "1");
+    let events_path = workspace.join(".sandrone/state/events.ndjson");
+    wait_for_file_contains(&events_path, "agent_document_status_used");
+    let events = fs::read_to_string(events_path).expect("events should be readable");
+    assert!(events.contains("agent_document_status_used"));
+    assert!(events.contains("artifact=obsidian/changes"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/agents/REQ-0001-S01.success")
+            .exists(),
+        "new workflow should not require a separate success file"
+    );
+    let change_doc = fs::read_to_string(
+        workspace
+            .join("obsidian/changes")
+            .read_dir()
+            .expect("changes readable")
+            .next()
+            .expect("change exists")
+            .expect("change entry readable")
+            .path()
+            .join("slices/S01/REQ-0001-S01 change-doc.md"),
+    )
+    .expect("change doc readable");
+    assert!(change_doc.contains("agent_status: submitted"));
+    assert!(change_doc.contains("agent_ready_for_review: true"));
+    let doc_status = run(&workspace, &["doc-status", "--request_id", "REQ-0001-S01"]);
+    assert_success(&doc_status);
+    let stdout = String::from_utf8_lossy(&doc_status.stdout);
+    assert!(stdout.contains("document_type: change-doc"));
+    assert!(stdout.contains("agent_status: submitted"));
+    assert!(stdout.contains("format_check_status: passed"));
+    assert!(stdout.contains("gate_name: change-doc"));
+    assert!(stdout.contains("gate_status: approved"));
+}
+
+#[test]
+fn agent_nonzero_exit_without_document_status_still_blocks() {
+    let workspace = temp_workspace("agent-no-document-status");
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "agent-no-document-status-test"],
+    ));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\ttest\tNo status request\tBody from issue\thttps://example.test/1\n'\n",
+    )
+    .expect("issue connector should be writable");
+    install_passing_decomposition_review_tool(&workspace);
+    fs::write(
+        workspace.join("tools/plan-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"plan ok\",\"process\":[\"checked plan\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("plan review connector should be writable");
+    fs::write(
+        workspace.join("tools/test-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests ok\",\"process\":[\"checked tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("test review connector should be writable");
+    fs::write(
+        workspace.join("tools/design-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"checked design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("design review connector should be writable");
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        format!(
+            r#"#!/usr/bin/env sh
+set -eu
+printf 'agent called for %s phase=%s\n' "$SANDRONE_REQUEST_ID" "$SANDRONE_AGENT_PHASE" >> .sandrone/state/agent.log
+case "$SANDRONE_AGENT_PHASE" in
+{}
+  planning)
+    printf '# 计划\n\n## 规范化需求记录\n\n保留。\n\n## 需求理解\n\n已填写。\n\n## 测试与验证\n\n已规划。\n' > "$SANDRONE_PLAN"
+    printf '\n## no document status - planning\n- 填写计划。\n' >> "$SANDRONE_AGENT_JOURNAL"
+    ;;
+  implementation)
+    printf 'implemented\n' > "$SANDRONE_WORKTREE/feature.txt"
+    printf '# 变更文档\n\n## 摘要\n\n已实现。\n\n## 实现前后对比\n\n已记录。\n\n## 关键设计点\n\n已记录。\n\n## 验证证据\n\n测试通过。\n\n## Review 结果\n\n等待汇总。\n' > "$SANDRONE_CHANGE_DOC"
+    printf '\n## no document status - implementation\n- 完成实现但没有提交状态。\n' >> "$SANDRONE_AGENT_JOURNAL"
+    exit 1
+    ;;
+  *)
+    echo "unexpected phase: $SANDRONE_AGENT_PHASE" >&2
+    exit 1
+    ;;
+esac
+"#,
+            decomposition_agent_case()
+        ),
+    )
+    .expect("issue agent should be writable");
+
+    let output = run(&workspace, &["tick", "--max-attempts", "20"]);
+    assert_success(&output);
+
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/agent.log"),
+        "agent called for REQ-0001-S01 phase=implementation",
+    );
+    wait_for_file_contains(&workspace.join(".sandrone/state/requests.tsv"), "blocked");
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("REQ-0001-S01"));
+    assert!(state.contains("blocked"));
+    assert!(!state.contains("wait-update-pr"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/agents/REQ-0001-S01.success")
+            .exists()
+    );
+    let events = fs::read_to_string(workspace.join(".sandrone/state/events.ndjson"))
+        .expect("events should be readable");
+    assert!(events.contains("implementation agent exited with code 1"));
+    assert!(!events.contains("agent_document_status_used"));
+}
+
+#[test]
+fn resume_code_review_gate_unavailable_retries_review_without_dispatching_impl() {
+    let workspace = temp_workspace("resume-code-review-gate-unavailable");
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "resume-code-review-gate-test"],
+    ));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\ttest\tReview gate request\tBody from issue\thttps://example.test/1\n'\n",
+    )
+    .expect("issue connector should be writable");
+    install_passing_decomposition_review_tool(&workspace);
+    fs::write(
+        workspace.join("tools/plan-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"PlanReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"plan ok\",\"process\":[\"checked plan\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("plan review connector should be writable");
+    fs::write(
+        workspace.join("tools/check-format.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    )
+    .expect("format connector should be writable");
+    fs::write(
+        workspace.join("tools/test-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":false,\"gate_unavailable\":true,\"decision\":\"rejected\",\"recommended_next_phase\":\"blocked\",\"summary\":\"review backend offline\",\"process\":[\"checked backend\"],\"critical\":[{\"title\":\"review backend offline\",\"evidence\":\"test reviewer backend is unavailable\",\"impact\":\"code-review cannot make a reliable decision\",\"required_fix\":\"restore reviewer backend\",\"suggested_change\":\"rerun code-review after backend is available\",\"verification\":\"summary gate_unavailable becomes false\"}],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("test review connector should be writable");
+    fs::write(
+        workspace.join("tools/design-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"design ok\",\"process\":[\"checked design\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("design review connector should be writable");
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        format!(
+            r#"#!/usr/bin/env sh
+set -eu
+printf 'agent called for %s phase=%s\n' "$SANDRONE_REQUEST_ID" "$SANDRONE_AGENT_PHASE" >> .sandrone/state/agent.log
+case "$SANDRONE_AGENT_PHASE" in
+{}
+  planning)
+    printf '# 计划\n\n## 规范化需求记录\n\n保留。\n\n## 需求理解\n\n已填写。\n\n## 测试与验证\n\n已规划。\n' > "$SANDRONE_PLAN"
+    ;;
+  implementation)
+    printf 'implemented\n' > "$SANDRONE_WORKTREE/feature.txt"
+    cat > "$SANDRONE_CHANGE_DOC" <<EOF
+---
+sandrone_schema: 1
+request_id: $SANDRONE_REQUEST_ID
+document_type: change-doc
+agent_phase: implementation
+agent_status: submitted
+agent_ready_for_review: true
+format_check_status: passed
+format_check_exit_code: 0
+updated_at: test
+---
+
+# 变更文档
+
+## 摘要
+
+已实现。
+
+## 实现前后对比
+
+已记录。
+
+## 关键设计点
+
+已记录。
+
+## 验证证据
+
+测试通过。
+
+## Review 结果
+
+等待汇总。
+EOF
+    ;;
+  *)
+    echo "unexpected phase: $SANDRONE_AGENT_PHASE" >&2
+    exit 1
+    ;;
+esac
+"#,
+            decomposition_agent_case()
+        ),
+    )
+    .expect("issue agent should be writable");
+
+    let first_tick = run(&workspace, &["tick", "--max-attempts", "20"]);
+    assert_success(&first_tick);
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        "REQ-0001-S01",
+    );
+    wait_for_file_contains(&workspace.join(".sandrone/state/requests.tsv"), "blocked");
+
+    let change_root = workspace
+        .join("obsidian/changes")
+        .read_dir()
+        .expect("changes readable")
+        .next()
+        .expect("change exists")
+        .expect("change entry readable")
+        .path();
+    let status_path = change_root.join("slices/S01/status.json");
+    let blocked_status = fs::read_to_string(&status_path).expect("status readable");
+    assert!(blocked_status.contains("\"status\": \"blocked\""));
+    assert!(blocked_status.contains("code-review gate unavailable"));
+    let summary =
+        fs::read_to_string(change_root.join("slices/S01/reviews/code-review/summary.json"))
+            .expect("summary readable");
+    assert!(summary.contains("\"gate_unavailable\": true"));
+
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        "#!/usr/bin/env sh\nprintf 'unexpected agent phase=%s\\n' \"$SANDRONE_AGENT_PHASE\" >> .sandrone/state/unexpected-agent.log\nexit 1\n",
+    )
+    .expect("issue agent should be replaceable");
+    fs::write(
+        workspace.join("tools/test-review.sh"),
+        "#!/usr/bin/env sh\nprintf 'test-review rerun\\n' >> .sandrone/state/review-rerun.log\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests ok after backend recovery\",\"process\":[\"checked tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    )
+    .expect("test review connector should be replaceable");
+
+    let resume = run(&workspace, &["resume", "--request_id", "REQ-0001-S01"]);
+    assert_success(&resume);
+    let resume_stdout = String::from_utf8_lossy(&resume.stdout);
+    assert!(resume_stdout.contains("resumed status: change-doc-submitted"));
+    let resumed_state =
+        fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).expect("state readable");
+    assert!(resumed_state.contains("REQ-0001-S01"));
+    assert!(resumed_state.contains("\tchange-doc-submitted\t"));
+
+    let second_tick = run(
+        &workspace,
+        &[
+            "tick",
+            "--request_id",
+            "REQ-0001-S01",
+            "--max-attempts",
+            "20",
+        ],
+    );
+    assert_success(&second_tick);
+    advance_until_not_review_running(&workspace, "REQ-0001-S01");
+    assert!(
+        !workspace
+            .join(".sandrone/state/unexpected-agent.log")
+            .exists(),
+        "resume from gate_unavailable should rerun code-review without dispatching implementation"
+    );
+    let review_log = fs::read_to_string(workspace.join(".sandrone/state/review-rerun.log"))
+        .expect("review rerun log readable");
+    assert!(review_log.contains("test-review rerun"));
+    wait_for_file_contains_any(
+        &workspace.join(".sandrone/state/requests.tsv"),
+        &["slice-finished", "wait-update-pr"],
+    );
+    let final_state =
+        fs::read_to_string(workspace.join(".sandrone/state/requests.tsv")).expect("state readable");
+    assert!(final_state.contains("REQ-0001-S01"));
+    assert!(final_state.contains("slice-finished") || final_state.contains("wait-update-pr"));
 }
 
 #[test]
@@ -3697,13 +4698,24 @@ fn code_review_can_recommend_returning_to_planning() {
         "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"planning\",\"summary\":\"approved plan misses migration strategy\",\"process\":[\"checked plan\",\"checked diff\"],\"critical\":[],\"high\":[{\"title\":\"plan lacks migration strategy\",\"evidence\":\"approved plan does not describe migration for changed storage format\",\"impact\":\"implementation may corrupt or strand existing data without a migration path\",\"required_fix\":\"return to planning and add migration strategy before implementation continues\",\"suggested_change\":\"Update plan.md with migration steps, rollback behavior, compatibility tests, and whether existing data must be transformed.\",\"verification\":\"Rerun plan-review and confirm the updated plan contains migration and rollback validation.\"}],\"warning\":[],\"info\":[]}'\n",
     )
     .expect("design review connector should be writable");
+    fs::write(
+        workspace.join("tools/issue-agent.sh"),
+        "#!/usr/bin/env sh\nprintf 'agent phase=%s\\n' \"$SANDRONE_AGENT_PHASE\" >> .sandrone/state/agent-dispatch.log\n",
+    )
+    .expect("issue agent should be writable");
 
     let rejected = run(&workspace, &["code-review", "--request_id", "REQ-0001"]);
-    assert_failure_contains(&rejected, "DesignReviewer rejected");
+    assert_success(&rejected);
+    advance_until_not_review_running(&workspace, "REQ-0001");
 
     let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
         .expect("request state should be readable");
-    assert!(state.contains("plan-review-rejected"));
+    assert!(
+        state.contains("plan-review-rejected")
+            || state.contains("planning-agent-running")
+            || state.contains("blocked"),
+        "code-review planning recommendation should return to planning, dispatch planning, or block on the follow-up planning gate; state was:\n{state}"
+    );
     let summary = fs::read_to_string(
         workspace
             .join("obsidian/changes")
@@ -3712,15 +4724,9 @@ fn code_review_can_recommend_returning_to_planning() {
     )
     .expect("code review summary should be readable");
     assert!(summary.contains("\"recommended_next_phase\": \"planning\""));
-    let status = fs::read_to_string(
-        workspace
-            .join("obsidian/changes")
-            .join(&change_name)
-            .join("status.json"),
-    )
-    .expect("status should be readable");
-    assert!(status.contains("\"return_to_phase_reason\""));
-    assert!(status.contains("code-review requested planning"));
+    let events = fs::read_to_string(workspace.join(".sandrone/state/events.ndjson"))
+        .expect("events should be readable");
+    assert!(events.contains("code-review requested planning"));
 }
 
 fn current_date() -> String {

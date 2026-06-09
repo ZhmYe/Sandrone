@@ -63,7 +63,6 @@ obsidian/changes/<YYYY-MM-DD-request-name>/
       status.json
       reviews/
   reviews/
-  checks/
   pr-conflicts/
 ```
 
@@ -76,12 +75,15 @@ obsidian/changes/<YYYY-MM-DD-request-name>/
 | `.sandrone/config.toml` | workspace 配置，例如 `parallel_limit`。 |
 | `.sandrone/state/requests.tsv` | request 中央索引。 |
 | `.sandrone/state/events.ndjson` | 审计事件流。 |
-| `.sandrone/state/agents/` | agent stdout、stderr、pid、exit code、hook log。 |
+| `.sandrone/state/jobs/` | agent/reviewer 的统一运行时目录，包含 `pid`、`exit`、`stdout.log`、`stderr.log`、`hook.log`、`events.log` 和 `runtime.json`。阶段完成状态写在对应 Markdown 文档的 Sandrone frontmatter。 |
+| `.sandrone/state/review-contexts/` | 每轮 reviewer 的轻量索引目录，包含 `artifact-index.md`、`changed-files.txt`、`diff-stat.txt` 和 `test-summary.txt`；长文档只在 index 中以原始路径引用，不再复制。 |
+| `.sandrone/state/agents/`、`.sandrone/state/reviews/` | 旧版本兼容路径；新 dashboard 和状态收敛优先读取 `state/jobs`，再回退到旧路径。 |
 | `.sandrone/state/locks/` | per-request lock，避免 heartbeat 与 hook 重复推进。 |
 | `.sandrone/state/sessions.json` | 可见 thread/session registry。 |
-| `obsidian/changes/**/status.json` | request/slice 的权威 runtime 状态和 `gates` 记录。 |
+| `obsidian/changes/**/status.json` | request/slice 的权威 runtime 阶段状态、阻塞原因、worktree/branch/PR 路径等机器状态。 |
+| `obsidian/changes/**/*.md` frontmatter | 阶段文档提交状态、format/check 摘要和 `gate_*` 门禁状态。 |
 
-`requests.tsv` 用于快速列表，`status.json` 用于具体 request/slice 的权威状态。框架需要保持二者同步；如果旧 workspace 出现列表滞后，通常用 `resume`、`advance` 或 `upgrade` 修复。
+`requests.tsv` 用于快速列表，`status.json` 用于具体 request/slice 的 runtime 状态，阶段 Markdown frontmatter 用于文档提交、format/check 和 gate 状态。框架需要保持这些状态源同步；如果旧 workspace 出现列表滞后或旧 gate 记录残留，通常用 `resume`、`advance` 或 `upgrade` 修复。
 
 ## 全局 Registry
 

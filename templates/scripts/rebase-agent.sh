@@ -15,6 +15,7 @@ trap '' HUP
 # - The agent MUST update SANDRONE_CHANGE_DOC and SANDRONE_AGENT_JOURNAL.
 # - The agent MUST NOT call sandrone approve/reject, integration-review, finish, commit, push, or PR commands.
 # - Success means the rebase is complete, conflict markers are gone, and the worktree is ready for outer IntegrationReviewer.
+#   When successful, mark SANDRONE_AGENT_STATUS_DOC frontmatter as submitted.
 # - Failure should exit non-zero with a helpful stderr message.
 
 {{CODEX_BIN_RESOLVER}}
@@ -73,6 +74,29 @@ read_dotenv_value() {
       exit
     }
   ' "$file"
+}
+
+resolve_dotenv_or_env() {
+  key="$1"
+  value="$(eval "printf '%s' \"\${$key:-}\"")"
+  if [ -z "$value" ]; then
+    value="$(read_dotenv_value "$env_file" "$key")"
+  fi
+  printf '%s\n' "$value"
+}
+
+resolve_agent_ignore_user_config() {
+  value="$(resolve_dotenv_or_env "SANDRONE_AGENT_IGNORE_USER_CONFIG")"
+  printf '%s\n' "${value:-1}"
+}
+
+truthy() {
+  value="$1"
+  case "$value" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF) return 1 ;;
+    *) return 1 ;;
+  esac
 }
 
 resolve_rebase_agent_model() {
@@ -139,7 +163,9 @@ fi
   printf 'Plan: %s\n' "${SANDRONE_PLAN:-}"
   printf 'Change doc: %s\n' "${SANDRONE_CHANGE_DOC:-}"
   printf 'Agent journal: %s\n' "${SANDRONE_AGENT_JOURNAL:-}"
+  printf 'Agent status doc: %s\n' "${SANDRONE_AGENT_STATUS_DOC:-}"
   printf 'Env file: %s\n' "$env_file"
+  printf 'Ignore user Codex config: %s\n' "$(resolve_agent_ignore_user_config)"
   printf 'Resolved model: %s\n' "${rebase_agent_model:-inherited}"
   printf 'Resolved reasoning effort: %s\n' "${rebase_agent_reasoning_effort:-inherited}"
   printf 'Worktree: %s\n\n' "${SANDRONE_WORKTREE:-}"
@@ -151,6 +177,10 @@ fi
     -c 'approval_policy="never"' \
     -c 'shell_environment_policy.inherit="all"' \
     --sandbox workspace-write
+
+  if truthy "$(resolve_agent_ignore_user_config)"; then
+    set -- "$@" --ignore-user-config
+  fi
 
   if [ -n "$rebase_agent_model" ]; then
     set -- "$@" -c "model=\"$rebase_agent_model\""

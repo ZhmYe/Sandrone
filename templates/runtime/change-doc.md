@@ -1,6 +1,18 @@
+---
+sandrone_schema: 1
+request_id: {{request_id}}
+document_type: change-doc
+agent_phase: implementation
+agent_status: draft
+agent_ready_for_review: false
+format_check_status: pending
+format_check_exit_code: ""
+updated_at: {{updated_at}}
+---
+
 # 变更文档: {{request_id}} {{title}}
 
-这是变更文档模板。Codex 必须在实现完成后、请求审批前填写真实内容。本文档的重点是解释需求如何被实现，而不是完整罗列所有文件变更。
+这是变更文档模板。Codex 必须在实现完成后、请求审批前填写真实内容，并更新上方 Sandrone frontmatter 中的文档提交状态。本文档的重点是解释需求如何被实现，而不是完整罗列所有文件变更。
 
 ## 导航
 
@@ -11,7 +23,6 @@
 - Decomposition: {{decomposition_wikilink}}
 - Agent journal: {{agent_journal_wikilink}}
 - CodeGraph context: `obsidian/codegraph/context.md`
-- Format check: [[checks/format-check|checks/format-check.md]]
 - Review details: [[reviews]]
 
 本节只保留链接和短说明，不复制完整 plan、完整 reviewer JSON 或长篇文件清单。
@@ -58,7 +69,7 @@
 
 填写准确命令、输出摘要、失败修复过程和人工验证证据。日志、错误、commit hash、测试输出保持原文。
 
-必须记录格式门禁结果: `tools/check-format.sh --check` 通过或明确 skip；如曾失败，引用 `checks/format-check.md` 并说明修复方式。
+必须记录格式门禁结果: `tools/check-format.sh --check` 通过、失败修复或明确 skip；如曾失败，引用 `status.json` 中的失败 reason，并说明修复方式。
 
 ## Review 结果
 

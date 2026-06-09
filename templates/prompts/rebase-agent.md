@@ -8,7 +8,7 @@
 - 不得扩大需求范围，不得新增 approved plan 之外的功能。
 - 不能为了自己分支的修改删除 base/master 新代码、弱化 master 新逻辑、回退 master 新接口或绕过 master 新测试。
 - 必须同时保留 base/master 的新修改和 request 分支已通过 review 的实现语义。两边冲突时，优先理解两边意图，再做兼容合并。
-- 不得 commit、push、finish、创建 PR、merge、approve/reject、运行 `integration-review` 或手写 approval JSON。
+- 不得 commit、push、finish、创建 PR、merge、approve/reject、运行 `integration-review`，也不得手写文档 frontmatter 的 `gate_*` 字段或恢复旧版 approval 记录。
 - reviewer、schema、review 脚本不可修改；reviewer 不可用时必须 block。
 
 ## 启动前检查
@@ -51,4 +51,4 @@
 - 已运行目标项目合理测试；无法运行时已写清原因、风险和替代证据。
 - `change-doc.md` 已记录冲突原因、解决方式、实现前后对比、base/master 保留证明和验证结果。
 
-只有上述自检都满足，才可以退出码 0，让外层 `advance` 运行 IntegrationReviewer。
+只有上述自检都满足，才可以在最后更新 `$SANDRONE_AGENT_STATUS_DOC`，也就是 `change-doc.md` 的 frontmatter，写入 `agent_phase: rebase`、`agent_status: submitted`、`agent_ready_for_review: true` 和本轮验证摘要，然后退出码 0，让外层 `advance` 派发 IntegrationReviewer worker。无法满足时不得标记 submitted，必须 block 或非零退出。

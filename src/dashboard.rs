@@ -945,13 +945,8 @@ fn dashboard_review_runtime(
     attempt: u32,
     reviewer: &DashboardReviewerDefinition,
 ) -> DashboardReviewRuntime {
-    let canonical_job_dir = Path::new(".sandrone")
-        .join("state")
-        .join("jobs")
-        .join(request_id)
-        .join(stage)
-        .join(format!("{attempt:03}"))
-        .join(reviewer.file_stem);
+    let canonical_job_dir =
+        runtime_review_job_state_dir(request_id, stage, attempt, reviewer.file_stem);
     let legacy_job_dir = Path::new(".sandrone")
         .join("state")
         .join("reviews")
@@ -966,20 +961,20 @@ fn dashboard_review_runtime(
     } else {
         canonical_job_dir.clone()
     };
-    let pid_path = existing_runtime_path(job_dir.join("pid"), legacy_job_dir.join("pid"));
-    let exit_path = existing_runtime_path(job_dir.join("exit"), legacy_job_dir.join("exit"));
-    let runtime_path = canonical_job_dir.join("runtime.json");
-    let events_log_path = canonical_job_dir.join("events.log");
+    let pid_path = existing_runtime_path(job_pid_path(&job_dir), legacy_job_dir.join("pid"));
+    let exit_path = existing_runtime_path(job_exit_path(&job_dir), legacy_job_dir.join("exit"));
+    let runtime_path = job_runtime_path(&canonical_job_dir);
+    let events_log_path = job_events_log_path(&canonical_job_dir);
     let stdout_path = existing_runtime_path(
-        canonical_job_dir.join("stdout.log"),
+        job_stdout_path(&canonical_job_dir),
         legacy_job_dir.join("stdout.log"),
     );
     let stderr_path = existing_runtime_path(
-        canonical_job_dir.join("stderr.log"),
+        job_stderr_path(&canonical_job_dir),
         legacy_job_dir.join("stderr.log"),
     );
     let hook_log_path = existing_runtime_path(
-        canonical_job_dir.join("hook.log"),
+        job_hook_log_path(&canonical_job_dir),
         legacy_job_dir.join("hook.log"),
     );
     let pid = fs::read_to_string(&pid_path)

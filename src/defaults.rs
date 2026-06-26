@@ -13,6 +13,7 @@ pub(crate) fn prepare_workspace_dirs() -> Result<()> {
     fs::create_dir_all("docs/reference")?;
     fs::create_dir_all("tools")?;
     fs::create_dir_all("skills/sandrone")?;
+    prepare_agent_runtime_dirs()?;
     Ok(())
 }
 
@@ -461,6 +462,13 @@ pub(crate) fn write_default_pr_status_tool() -> Result<()> {
     write_executable_file(PR_STATUS_TOOL, default_pr_status_tool_content())
 }
 
+pub(crate) fn write_default_merge_plan_tool() -> Result<()> {
+    if Path::new(MERGE_PLAN_TOOL).exists() {
+        return Ok(());
+    }
+    write_executable_file(MERGE_PLAN_TOOL, default_merge_plan_tool_content())
+}
+
 pub(crate) fn write_default_pr_merge_tool() -> Result<()> {
     if Path::new(PR_MERGE_TOOL).exists() {
         return Ok(());
@@ -474,6 +482,10 @@ fn default_pr_tool_content() -> &'static str {
 
 fn default_pr_status_tool_content() -> &'static str {
     assets::PR_STATUS_SCRIPT
+}
+
+fn default_merge_plan_tool_content() -> &'static str {
+    assets::MERGE_PLAN_SCRIPT
 }
 
 fn default_pr_merge_tool_content() -> &'static str {
@@ -677,6 +689,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             path: PR_STATUS_TOOL,
             example_path: PR_STATUS_TOOL_EXAMPLE,
             content: default_pr_status_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
+            path: MERGE_PLAN_TOOL,
+            example_path: MERGE_PLAN_TOOL_EXAMPLE,
+            content: default_merge_plan_tool_content().to_string(),
             executable: true,
         },
         DefaultManagedAsset {

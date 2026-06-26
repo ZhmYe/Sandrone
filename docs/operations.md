@@ -73,7 +73,13 @@ SANDRONE_AUTO_MERGE=1 sdr tick
 sdr tick --auto-merge
 ```
 
-自动合并调度每轮最多处理一个 `wait-finish` request。`pr-merge` 只有在 `change-doc` gate 已通过、队列决策为 `ready_for_merge`、`tools/pr-status.sh` 返回 `safe` 时才会调用 `tools/pr-merge.sh`。`open`、`unsafe`、`unsupported`、缺少开关或队列未就绪都会只记录 scheduler decision，不会执行 merge。
+自动合并调度每轮最多处理一个 `wait-finish` request，但不会把 request 完成事件当成合并触发器。开启后，tick 会先刷新所有候选 PR 的轻量状态，写入全局队列和计划:
+
+- `.sandrone/state/scheduler/merge-queue.tsv`
+- `.sandrone/state/scheduler/merge-plan.json`
+- `obsidian/merge/merge-plan.md`
+
+其中 `.sandrone/state/scheduler/*` 是兼容副本；canonical merge planner 运行产物位于 `agents/merge-planner/runs/**/artifacts/`。随后调用 `tools/merge-plan.sh` 选择本轮优先合并的一个 request。这个脚本只决定队列优先级，不审计实现质量，不 merge，不 push。`pr-merge` 只有在 `change-doc` gate 已通过、merge-plan 返回 `ready_for_merge`、`tools/pr-status.sh` 返回 `safe` 时才会调用 `tools/pr-merge.sh`。`open`、`unsafe`、`unsupported`、缺少开关或队列未就绪都会只记录计划和 scheduler decision，不会执行 merge。
 
 ## PR Refresh / Rebase
 
@@ -111,6 +117,7 @@ obsidian/changes/<name>/<REQ> agent-journal.md
 obsidian/changes/<name>/reviews/*/details/*.json
 .sandrone/state/jobs/<REQ>/agent/current/issue-agent/stderr.log
 .sandrone/state/jobs/<REQ>/<stage>/<attempt>/<reviewer>/stderr.log
+agents/<kind>/runs/**/logs/stderr.log
 ```
 
 修复外部问题后：

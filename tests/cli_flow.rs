@@ -640,7 +640,15 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(workspace.join("tools/issue-agent.sh").is_file());
     assert!(workspace.join("tools/rebase-agent.sh").is_file());
     assert!(workspace.join("tools/pr-status.sh").is_file());
+    assert!(workspace.join("tools/merge-plan.sh").is_file());
     assert!(workspace.join("tools/pr-merge.sh").is_file());
+    assert!(
+        workspace
+            .join("agents/config/implementation-agent.json")
+            .is_file()
+    );
+    assert!(workspace.join("agents/config/test-reviewer.json").is_file());
+    assert!(workspace.join("agents/config/merge-planner.json").is_file());
     assert!(workspace.join("tools/prompts/plan-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/test-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/design-reviewer.md").is_file());
@@ -2727,7 +2735,28 @@ fn tick_auto_merge_stays_off_until_config_or_flag_enables_it() {
     let enabled = run(&workspace, &["tick"]);
     assert_success(&enabled);
     let enabled_stdout = String::from_utf8_lossy(&enabled.stdout);
+    assert!(enabled_stdout.contains("Tick merge planner: ready_for_merge"));
     assert!(enabled_stdout.contains("Tick merge scheduler checked REQ-0001: merged"));
+    let merge_plan = fs::read_to_string(workspace.join("obsidian/merge/merge-plan.md"))
+        .expect("merge plan should be readable");
+    assert!(merge_plan.contains("Selected request: `REQ-0001`"));
+    let merge_planner_runs = workspace.join("agents/merge-planner/runs");
+    let merge_planner_run = fs::read_dir(&merge_planner_runs)
+        .expect("merge planner runs dir should exist")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| path.join("artifacts/merge-plan.json").is_file())
+        .expect("merge planner should write artifacts");
+    assert!(
+        merge_planner_run
+            .join("artifacts/merge-queue.tsv")
+            .is_file()
+    );
+    assert!(
+        workspace
+            .join(".sandrone/state/scheduler/merge-queue.tsv")
+            .is_file()
+    );
     let merge_log = fs::read_to_string(workspace.join(".sandrone/state/pr-merge-called.log"))
         .expect("merge log should be readable");
     assert_eq!(merge_log.lines().count(), 1);
@@ -2770,8 +2799,14 @@ fn tick_auto_merge_processes_at_most_one_wait_finish_request_per_run() {
     let output = run(&workspace, &["tick", "--auto-merge"]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Tick merge planner: ready_for_merge"));
     assert!(stdout.contains("Tick merge scheduler checked REQ-0001: merged"));
     assert!(!stdout.contains("Tick merge scheduler checked REQ-0002"));
+    let merge_queue =
+        fs::read_to_string(workspace.join(".sandrone/state/scheduler/merge-queue.tsv"))
+            .expect("merge queue should be readable");
+    assert!(merge_queue.contains("REQ-0001"));
+    assert!(merge_queue.contains("REQ-0002"));
     let merge_log = fs::read_to_string(workspace.join(".sandrone/state/pr-merge-called.log"))
         .expect("merge log should be readable");
     assert_eq!(merge_log.lines().count(), 1);
@@ -2784,6 +2819,63 @@ fn tick_auto_merge_processes_at_most_one_wait_finish_request_per_run() {
     assert_eq!(state.matches("\tfinished\t").count(), 1);
     assert!(state.contains("REQ-0002"));
     assert!(state.contains("wait-finish"));
+}
+
+#[test]
+fn tick_auto_merge_uses_merge_plan_priority_before_pr_merge() {
+    let workspace = temp_workspace("tick-auto-merge-plan-priority");
+    let first_change_name = format!("{}-merge-plan-priority-a", current_date());
+    let second_change_name = format!("{}-merge-plan-priority-b", current_date());
+    assert_success(&run(&workspace, &["new", "--name", "merge-plan-priority"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tFirst merge candidate\\tBody\\thttps://example.test/1\\nexternal-2\\ttest\\tSecond merge candidate\\tBody\\thttps://example.test/2\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'safe\\thttps://example.test/pr/%s\\tready to merge\\n' \"$SANDRONE_REQUEST_ID\"\n",
+    )
+    .expect("pr status connector should be writable");
+    fs::write(
+        workspace.join("tools/merge-plan.sh"),
+        "#!/usr/bin/env sh\nset -eu\ntest -f \"$SANDRONE_MERGE_QUEUE\"\nprintf 'ready_for_merge\\tREQ-0002\\tcustom priority prefers the second PR\\n'\n",
+    )
+    .expect("merge planner connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-merge.sh"),
+        "#!/usr/bin/env sh\nset -eu\nprintf '%s\\n' \"$SANDRONE_REQUEST_ID\" >> .sandrone/state/pr-merge-called.log\nprintf 'merged\\thttps://example.test/pr/%s\\tmerged by custom plan\\n' \"$SANDRONE_REQUEST_ID\"\n",
+    )
+    .expect("pr merge connector should be writable");
+    assert_success(&run(&workspace, &["update"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\n",
+    )
+    .expect("issue connector should be writable");
+    prepare_wait_finish_request(&workspace, "REQ-0001", &first_change_name);
+    prepare_wait_finish_request(&workspace, "REQ-0002", &second_change_name);
+
+    let output = run(&workspace, &["tick", "--auto-merge"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Tick merge planner: ready_for_merge"));
+    assert!(stdout.contains("selected: REQ-0002"));
+    assert!(stdout.contains("Tick merge scheduler checked REQ-0002: merged"));
+    assert!(!stdout.contains("Tick merge scheduler checked REQ-0001"));
+    let merge_log = fs::read_to_string(workspace.join(".sandrone/state/pr-merge-called.log"))
+        .expect("merge log should be readable");
+    assert_eq!(merge_log.trim(), "REQ-0002");
+    let merge_plan = fs::read_to_string(workspace.join("obsidian/merge/merge-plan.md"))
+        .expect("merge plan should be readable");
+    assert!(merge_plan.contains("Selected request: `REQ-0002`"));
+    assert!(merge_plan.contains("custom priority prefers the second PR"));
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("REQ-0001"));
+    assert!(state.contains("REQ-0002"));
+    assert!(state.contains("wait-finish"));
+    assert_eq!(state.matches("\tfinished\t").count(), 1);
 }
 
 #[test]
@@ -3331,6 +3423,23 @@ fn review_worker_streams_reviewer_tool_output_to_runtime_logs() {
         &workspace.join(".sandrone/state/jobs/REQ-0001/plan-review/001/plan-reviewer/events.log"),
         "review-tool-exited",
     );
+    let plan_reviewer_runs = workspace.join("agents/plan-reviewer/runs");
+    let run_dir = fs::read_dir(&plan_reviewer_runs)
+        .expect("plan reviewer runs dir should exist")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| path.join("logs/stderr.log").is_file())
+        .expect("plan reviewer run should include logs");
+    wait_for_file_contains(
+        &run_dir.join("logs/stderr.log"),
+        "live reviewer stderr before JSON",
+    );
+    assert!(
+        run_dir
+            .join("artifacts/review-context/artifact-index.md")
+            .is_file()
+    );
+    assert!(run_dir.join("artifacts/runtime.json").is_file());
     advance_until_not_review_running(&workspace, "REQ-0001");
     let detail = fs::read_to_string(
         workspace
@@ -4520,6 +4629,15 @@ esac
         &workspace.join(".sandrone/state/agent.log"),
         "agent called for REQ-0001-S01 phase=implementation max=20",
     );
+    let implementation_runs = workspace.join("agents/implementation-agent/runs");
+    let implementation_run = fs::read_dir(&implementation_runs)
+        .expect("implementation agent runs dir should exist")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| path.join("logs/stdout.log").is_file())
+        .expect("implementation run should include logs");
+    assert!(implementation_run.join("logs/stderr.log").is_file());
+    assert!(implementation_run.join("artifacts/runtime.json").is_file());
     wait_for_file(&workspace.join(".sandrone/state/agents/REQ-0001.exit"));
     wait_for_file_contains(
         &workspace.join(".sandrone/state/requests.tsv"),

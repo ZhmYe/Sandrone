@@ -48,6 +48,20 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
             false,
         ),
         doctor_check(
+            "Agent runtime",
+            Path::new("agents").is_dir(),
+            "agents runtime directory exists",
+            "missing agents runtime directory; run sandrone upgrade",
+            false,
+        ),
+        doctor_check(
+            "Merge planner",
+            Path::new(MERGE_PLAN_TOOL).exists(),
+            "merge-plan connector exists",
+            "missing tools/merge-plan.sh; run sandrone upgrade",
+            false,
+        ),
+        doctor_check(
             "Obsidian vault",
             Path::new(".obsidian").is_dir() && Path::new("obsidian/changes").is_dir(),
             "workspace Obsidian vault directories exist",

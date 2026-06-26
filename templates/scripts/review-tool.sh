@@ -21,6 +21,12 @@ workspace="${SANDRONE_WORKSPACE:-$(pwd)}"
 prompt="${SANDRONE_REVIEW_PROMPT:-{{PROMPT_PATH}}}"
 schema="${SANDRONE_REVIEW_SCHEMA:-tools/schemas/review-result.schema.json}"
 env_file="${SANDRONE_ENV_FILE:-$workspace/.env}"
+reviewer_config_dir="${SANDRONE_REVIEWER_CONFIG_DIR:-}"
+reviewer_config_path="${SANDRONE_REVIEWER_CONFIG_PATH:-}"
+reviewer_kind="${SANDRONE_REVIEWER_KIND:-}"
+if [ -z "$reviewer_config_path" ] && [ -n "$reviewer_config_dir" ] && [ -n "$reviewer_kind" ]; then
+  reviewer_config_path="$reviewer_config_dir/${reviewer_kind}.json"
+fi
 
 source_codex_home="${CODEX_HOME:-}"
 if [ -z "$source_codex_home" ] && [ -n "${HOME:-}" ]; then
@@ -32,6 +38,25 @@ resolve_config_value() {
   key="$2"
   [ -f "$file" ] || return 0
   awk -F'"' -v key="$key" '$1 ~ ("^[[:space:]]*" key "[[:space:]]*=" ) { print $2; exit }' "$file"
+}
+
+read_json_value() {
+  file="$1"
+  key="$2"
+  [ -f "$file" ] || return 0
+  awk -v key="$key" '
+    BEGIN {
+      pattern = "^[[:space:]]*\"" key "\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+    }
+    {
+      line=$0
+      gsub(/\r/, "", line)
+      if (match(line, pattern, m)) {
+        print m[1]
+        exit
+      }
+    }
+  ' "$file"
 }
 
 read_dotenv_value() {
@@ -118,6 +143,12 @@ resolve_reviewer_model() {
 
 
   if [ -z "$reviewer_model" ]; then
+    reviewer_model="$(read_json_value "$reviewer_config_path" "model")"
+  fi
+  if [ -z "$reviewer_reasoning_effort" ]; then
+    reviewer_reasoning_effort="$(read_json_value "$reviewer_config_path" "reasoning_effort")"
+  fi
+  if [ -z "$reviewer_model" ]; then
     reviewer_model="$(read_dotenv_value "$env_file" "$env_key_model")"
   fi
   if [ -z "$reviewer_reasoning_effort" ]; then
@@ -168,6 +199,10 @@ resolve_review_backend() {
   reviewer_name="${1:-{{REVIEWER}}}"
   env_key_backend="SANDRONE_REVIEW_BACKEND"
   backend=""
+  config_backend="$(read_json_value "$reviewer_config_path" "agent_backend")"
+  if [ -z "$config_backend" ]; then
+    config_backend="$(read_json_value "$reviewer_config_path" "review_backend")"
+  fi
 
   case "$reviewer_name" in
     PlanReviewer)
@@ -193,10 +228,13 @@ resolve_review_backend() {
   esac
 
   if [ -z "$backend" ]; then
-    backend="$(read_dotenv_value "$env_file" "$env_key_backend")"
+    backend="${SANDRONE_REVIEWER_BACKEND:-${SANDRONE_REVIEW_BACKEND:-}}"
   fi
   if [ -z "$backend" ]; then
-    backend="${SANDRONE_REVIEWER_BACKEND:-${SANDRONE_REVIEW_BACKEND:-}}"
+    backend="$config_backend"
+  fi
+  if [ -z "$backend" ]; then
+    backend="$(read_dotenv_value "$env_file" "$env_key_backend")"
   fi
   if [ -z "$backend" ]; then
     backend="$(read_dotenv_value "$env_file" "SANDRONE_REVIEWER_BACKEND")"
@@ -213,6 +251,9 @@ resolve_review_backend() {
 resolve_llm_api_key() {
   key="${LLM_API_KEY:-}"
   if [ -z "$key" ]; then
+    key="$(read_json_value "$reviewer_config_path" "api_key")"
+  fi
+  if [ -z "$key" ]; then
     key="$(read_dotenv_value "$env_file" "LLM_API_KEY")"
   fi
   printf '%s\n' "$key"
@@ -220,6 +261,9 @@ resolve_llm_api_key() {
 
 resolve_llm_base_url() {
   value="${LLM_BASE_URL:-}"
+  if [ -z "$value" ]; then
+    value="$(read_json_value "$reviewer_config_path" "base_url")"
+  fi
   if [ -z "$value" ]; then
     value="$(read_dotenv_value "$env_file" "LLM_BASE_URL")"
   fi

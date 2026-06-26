@@ -32,6 +32,12 @@ workspace="${SANDRONE_WORKSPACE:-$(pwd)}"
 phase="${SANDRONE_AGENT_PHASE:-planning}"
 shared_prompt="${SANDRONE_ISSUE_AGENT_SHARED_PROMPT:-tools/prompts/issue-agent.md}"
 env_file="${SANDRONE_ENV_FILE:-$workspace/.env}"
+agent_config_dir="${SANDRONE_AGENT_CONFIG_DIR:-}"
+agent_config_path="${SANDRONE_AGENT_CONFIG_PATH:-}"
+agent_kind="${SANDRONE_AGENT_KIND:-}"
+if [ -z "$agent_config_path" ] && [ -n "$agent_config_dir" ] && [ -n "$agent_kind" ]; then
+  agent_config_path="$agent_config_dir/${agent_kind}.json"
+fi
 case "$phase" in
   decomposition|planning) default_max_attempts=5 ;;
   implementation) default_max_attempts=20 ;;
@@ -76,6 +82,25 @@ resolve_config_value() {
       }
       print v
       exit
+    }
+  ' "$file"
+}
+
+read_json_value() {
+  file="$1"
+  key="$2"
+  [ -f "$file" ] || return 0
+  awk -v key="$key" '
+    BEGIN {
+      pattern = "^[[:space:]]*\"" key "\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+    }
+    {
+      line=$0
+      gsub(/\r/, "", line)
+      if (match(line, pattern, m)) {
+        print m[1]
+        exit
+      }
     }
   ' "$file"
 }
@@ -158,6 +183,13 @@ resolve_agent_model() {
   fi
 
   if [ -z "$env_model" ]; then
+    env_model="$(read_json_value "$agent_config_path" "model")"
+  fi
+  if [ -z "$env_reasoning" ]; then
+    env_reasoning="$(read_json_value "$agent_config_path" "reasoning_effort")"
+  fi
+
+  if [ -z "$env_model" ]; then
     env_model="$(read_dotenv_value "$env_file" "$env_key_model")"
   fi
   if [ -z "$env_reasoning" ]; then
@@ -206,6 +238,7 @@ resolve_agent_backend() {
   phase="$1"
   env_key_backend="SANDRONE_AGENT_BACKEND"
   backend=""
+  config_backend="$(read_json_value "$agent_config_path" "agent_backend")"
 
   case "$phase" in
     decomposition)
@@ -223,10 +256,13 @@ resolve_agent_backend() {
   esac
 
   if [ -z "$backend" ]; then
-    backend="$(read_dotenv_value "$env_file" "$env_key_backend")"
+    backend="${SANDRONE_AGENT_BACKEND:-${SANDRONE_BACKEND:-}}"
   fi
   if [ -z "$backend" ]; then
-    backend="${SANDRONE_AGENT_BACKEND:-${SANDRONE_BACKEND:-}}"
+    backend="$config_backend"
+  fi
+  if [ -z "$backend" ]; then
+    backend="$(read_dotenv_value "$env_file" "$env_key_backend")"
   fi
   if [ -z "$backend" ]; then
     backend="$(read_dotenv_value "$env_file" "SANDRONE_AGENT_BACKEND")"
@@ -245,6 +281,9 @@ agent_backend="$(resolve_agent_backend "$phase")"
 resolve_llm_api_key() {
   key="${LLM_API_KEY:-}"
   if [ -z "$key" ]; then
+    key="$(read_json_value "$agent_config_path" "api_key")"
+  fi
+  if [ -z "$key" ]; then
     key="$(read_dotenv_value "$env_file" "LLM_API_KEY")"
   fi
   printf '%s\n' "$key"
@@ -252,6 +291,9 @@ resolve_llm_api_key() {
 
 resolve_llm_base_url() {
   value="${LLM_BASE_URL:-}"
+  if [ -z "$value" ]; then
+    value="$(read_json_value "$agent_config_path" "base_url")"
+  fi
   if [ -z "$value" ]; then
     value="$(read_dotenv_value "$env_file" "LLM_BASE_URL")"
   fi

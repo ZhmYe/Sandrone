@@ -37,7 +37,7 @@
 | `sdr tick --request_id REQ-0001` | 只处理一个 request。 |
 | `sdr tick --parallel-limit 2` | 单次覆盖并发上限。 |
 | `sdr tick --max-attempts 20` | 单次覆盖 review 最大修复轮数。 |
-| `sdr tick --auto-merge` | 单次开启 merge scheduler；每轮最多合并一个 `wait-finish` request。 |
+| `sdr tick --auto-merge` | 单次开启 merge scheduler；先生成 merge plan，再每轮最多合并一个 `wait-finish` request。 |
 | `sdr tick --no-auto-merge` | 单次关闭 merge scheduler，覆盖 config/env。 |
 | `sdr advance --request_id REQ-0001` | 推进单个 request；通常由 agent 或 review worker hook 自动调用。 |
 
@@ -70,7 +70,7 @@
 | `sdr resume --request_id REQ-0001` | 从 blocked 恢复到可派发状态；gate 不可用会重跑 reviewer，代码/文档问题会回到 agent 修复。 |
 | `sdr finish --request_id REQ-0001 --message "feat: ..."` | 校验 gate，commit、push 分支并调用 PR connector。 |
 | `sdr pr-status --request_id REQ-0001` | 调用 PR 状态脚本；只有 `merged` 才标记 finished。 |
-| `sdr pr-merge --request_id REQ-0001 --auto-merge` | 可选自动合并；只有 `pr-status=safe` 且队列 ready 时才调用 merge connector。 |
+| `sdr pr-merge --request_id REQ-0001 --auto-merge` | 可选自动合并执行器；只有 `merge-plan=ready_for_merge` 且 `pr-status=safe` 时才调用 merge connector。 |
 | `sdr pr-refresh --request_id REQ-0001` | 同步 base/master、rebase、处理冲突并派发/收敛 IntegrationReviewer。 |
 
 ## Dashboard

@@ -93,24 +93,37 @@ pub(crate) fn run_pr_merge_scheduler_from_tick(
     if !auto_merge_enabled {
         return Ok(false);
     }
-    let requests = load_requests()?;
-    let Some(request_id) = requests
-        .iter()
-        .filter(|request| {
-            request_filter
-                .map(|filter| request.request_id == filter)
-                .unwrap_or(true)
-        })
-        .find(|request| canonical_status(&request.status) == STATUS_WAIT_FINISH)
-        .map(|request| request.request_id.clone())
-    else {
+    let Some(plan) = plan_merge_queue_from_tick(request_filter, auto_merge_enabled)? else {
         return Ok(false);
     };
-    let Some(_lock) = RequestLock::acquire(&request_id)? else {
-        println!("Tick merge scheduler skipped for {request_id}: request lock is already held.");
+    println!("Tick merge planner: {}", plan.queue_decision);
+    println!("  selected: {}", fallback_empty(&plan.request_id, "none"));
+    println!("  reason: {}", plan.reason);
+    println!("  plan: {}", plan.plan_md_path.display());
+    println!("  queue: {}", plan.queue_path.display());
+
+    if plan.queue_decision != "ready_for_merge" {
+        append_event(
+            "merge_plan_deferred",
+            fallback_empty(&plan.request_id, ""),
+            "delivery",
+            &plan.queue_decision,
+            &format!(
+                "plan={}; reason={}",
+                plan.plan_md_path.display(),
+                plan.reason
+            ),
+        )?;
+        return Ok(true);
+    }
+    let Some(_lock) = RequestLock::acquire(&plan.request_id)? else {
+        println!(
+            "Tick merge scheduler skipped for {}: request lock is already held.",
+            plan.request_id
+        );
         return Ok(false);
     };
-    let outcome = run_pr_merge_gate(&request_id, "ready_for_merge", true)?;
+    let outcome = run_pr_merge_gate(&plan.request_id, &plan.queue_decision, true)?;
     println!(
         "Tick merge scheduler checked {}: {}",
         outcome.request_id, outcome.action

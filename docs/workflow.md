@@ -58,7 +58,7 @@ flowchart TD
 5. 对漏掉 hook 的 request 执行兜底推进；如果 review worker 已结束，会收敛 summary、gate 和下一步状态。
 6. code-review 通过后停在 `wait-update-pr`。
 
-默认 tick 不会 merge。开启 `auto_merge`、设置 `SANDRONE_AUTO_MERGE=1` 或单次传入 `--auto-merge` 后，tick 每轮最多处理一个 `wait-finish` request。合并前仍必须由队列判断和 PR connector 同时确认安全；合并一个 PR 后，下一轮 tick 会重新评估剩余 PR。
+默认 tick 不会 merge。开启 `auto_merge`、设置 `SANDRONE_AUTO_MERGE=1` 或单次传入 `--auto-merge` 后，tick 会把所有 `wait-finish` request 作为全局候选，刷新轻量 `pr-status`，写出 `merge-queue.tsv` 和 `obsidian/merge/merge-plan.md`，再调用 `tools/merge-plan.sh` 选择本轮优先合并的一个 PR。合并前仍必须由 merge-plan 返回 `ready_for_merge`，并由 PR connector 重新确认 `safe`；合并一个 PR 后，下一轮 tick 会重新评估剩余 PR。
 
 `sdr advance --request_id <REQ>` 是单 request 推进器，通常由 agent wrapper hook 或 review worker hook 自动调用。它不抓 issue，也不扫描全部 request，只在 per-request lock 下完成当前 request 的 gate、worktree、review worker 收敛、下一 phase 派发或状态落盘。
 
@@ -69,11 +69,11 @@ agent wrapper 会记录 stdout、stderr、pid、exit code 和 hook log。Codex C
 review gate 和 implementation agent 使用同一种异步推进模型:
 
 1. `advance` 或 `tick` 看到 `*-submitted` 状态后，派发对应 reviewer worker，并把状态写成 `*-review-running`。
-2. 每个 reviewer worker 独立运行脚本，把 detail JSON 写入 `reviews/<stage>/details/`，同时在 `.sandrone/state/jobs/<REQ>/<stage>/<attempt>/<reviewer>/` 记录 pid、exit、stdout、stderr、hook、events 和 runtime 元数据。
+2. 每个 reviewer worker 独立运行脚本，把 detail JSON 写入 `reviews/<stage>/details/`，同时在 `agents/<reviewer>/runs/<timestamp-REQ-stage-attempt>/` 记录 pid、exit、stdout、stderr、hook、events、runtime 元数据和 review context。`.sandrone/state/jobs` 只保留兼容指针/镜像。
 3. worker 退出后自动调用 `advance --request_id <REQ>`；如果 hook 漏掉，下一次 `tick` 或手动 `advance` 会兜底收敛。
 4. 所有 reviewer detail 都存在后，框架生成 `summary.json`，写入阶段 Markdown frontmatter 的 gate 状态，并按结果进入下一步、退回 agent 或 block。
 
-因此 `sdr plan-review`、`sdr code-review` 和 `sdr integration-review` 都是“派发并返回”，不会等待模型评审完整结束。要观察后台进度，使用 `sdr status`、`sdr dashboard`、`.sandrone/state/jobs/` 日志，或再次运行 `sdr advance`/`sdr tick` 收敛。
+因此 `sdr plan-review`、`sdr code-review` 和 `sdr integration-review` 都是“派发并返回”，不会等待模型评审完整结束。要观察后台进度，使用 `sdr status`、`sdr dashboard`、`agents/<kind>/runs/**/logs/`，或再次运行 `sdr advance`/`sdr tick` 收敛。
 
 ## Review 轮次
 

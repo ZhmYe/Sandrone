@@ -6,6 +6,7 @@ mod delivery;
 mod doc_status;
 mod doctor;
 mod jobs;
+mod merge_plan;
 mod obsidian;
 mod registry;
 mod review_gate;
@@ -21,6 +22,7 @@ pub(crate) use delivery::{
 pub(crate) use doc_status::*;
 pub(crate) use doctor::doctor;
 pub(crate) use jobs::*;
+pub(crate) use merge_plan::*;
 pub(crate) use obsidian::*;
 pub(crate) use review_gate::{
     code_review, decomposition_review, integration_review, plan_review, refresh_review_stage,
@@ -57,6 +59,7 @@ const ISSUE_AGENT_TOOL: &str = "tools/issue-agent.sh";
 const REBASE_AGENT_TOOL: &str = "tools/rebase-agent.sh";
 const PR_TOOL: &str = "tools/pr-create.sh";
 const PR_STATUS_TOOL: &str = "tools/pr-status.sh";
+const MERGE_PLAN_TOOL: &str = "tools/merge-plan.sh";
 const PR_MERGE_TOOL: &str = "tools/pr-merge.sh";
 const CHECK_FORMAT_TOOL: &str = "tools/check-format.sh";
 const PLAN_REVIEW_TOOL: &str = "tools/plan-review.sh";
@@ -80,6 +83,7 @@ const ISSUE_AGENT_TOOL_EXAMPLE: &str = "tools/issue-agent.example.sh";
 const REBASE_AGENT_TOOL_EXAMPLE: &str = "tools/rebase-agent.example.sh";
 const PR_TOOL_EXAMPLE: &str = "tools/pr-create.example.sh";
 const PR_STATUS_TOOL_EXAMPLE: &str = "tools/pr-status.example.sh";
+const MERGE_PLAN_TOOL_EXAMPLE: &str = "tools/merge-plan.example.sh";
 const PR_MERGE_TOOL_EXAMPLE: &str = "tools/pr-merge.example.sh";
 const CHECK_FORMAT_TOOL_EXAMPLE: &str = "tools/check-format.example.sh";
 const PLAN_REVIEW_TOOL_EXAMPLE: &str = "tools/plan-review.example.sh";
@@ -434,6 +438,7 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
+    write_default_merge_plan_tool()?;
     write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
@@ -507,6 +512,7 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
+    write_default_merge_plan_tool()?;
     write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
@@ -3563,7 +3569,7 @@ fn spawn_issue_agent(
         return Err(format!("{tool_path} does not exist").into());
     }
     let session_path = agent_session_path(&request.request_id, phase);
-    fs::create_dir_all(agent_job_state_dir(&request.request_id))?;
+    create_agent_run_state_dir(&request.request_id, phase.as_str())?;
     if resume_session_id.is_none() {
         remove_runtime_file(&session_path, None)?;
     }
@@ -3583,9 +3589,7 @@ fn spawn_issue_agent(
         Some(&legacy_hook_log_path),
     )?);
     drop(create_truncated_runtime_file(&events_log_path, None)?);
-    if exit_path.exists() {
-        remove_runtime_file(&exit_path, Some(&legacy_exit_path))?;
-    }
+    remove_runtime_file(&exit_path, Some(&legacy_exit_path))?;
     let wrapper_script = r#"tool=$1
 exit_path=$2
 legacy_exit_path=$3
@@ -3833,6 +3837,7 @@ fn apply_issue_agent_env(
     let dag_artifact = request_handoff_artifact_path_string(request, "dag.json");
     let change_doc_artifact = request_handoff_artifact_path_string(request, "change-doc.md");
     let agent_journal_artifact = request_handoff_artifact_path_string(request, "agent-journal.md");
+    let agent_kind = agent_kind_for_phase(phase.as_str());
     command
         .env("SANDRONE_BIN", current_exe.to_string_lossy().to_string())
         .env("SANDRONE_WORKSPACE", absolute_path_string("."))
@@ -3851,6 +3856,15 @@ fn apply_issue_agent_env(
         )
         .env("SANDRONE_MAX_ATTEMPTS", max_attempts.to_string())
         .env("SANDRONE_AGENT_PHASE", phase.as_str())
+        .env("SANDRONE_AGENT_KIND", agent_kind)
+        .env(
+            "SANDRONE_AGENT_CONFIG_DIR",
+            absolute_path_string("agents/config"),
+        )
+        .env(
+            "SANDRONE_AGENT_CONFIG_PATH",
+            absolute_path_string(format!("agents/config/{agent_kind}.json")),
+        )
         .env(
             "SANDRONE_AGENT_STATUS_DOC",
             absolute_path_string(phase_document_path(request, phase)),

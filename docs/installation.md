@@ -112,7 +112,7 @@ launchctl setenv SANDRONE_CODEX_APP "/Applications/Codex.app"
 
 ## 模型路由
 
-每个 workspace 会生成 `.env`，默认来自 `templates/.env.example`。常用变量：
+每个 workspace 会生成 `agents/config/<kind>.json` 和 `.env`。推荐在 `agents/config/<kind>.json` 里配置每种 agent/reviewer 的 `agent_backend`、`model`、`reasoning_effort`、`api_key` 和 `base_url`；`.env` 主要作为旧配置兼容和 workspace 级别兜底。常用 `.env` 变量：
 
 ```bash
 SANDRONE_DECOMPOSITION_AGENT_MODEL=
@@ -129,7 +129,7 @@ SANDRONE_INTEGRATION_REVIEWER_MODEL=
 每个字段都有对应的 `*_REASONING_EFFORT`。读取优先级：
 
 ```text
-阶段专用变量 -> 通用 agent/reviewer 变量 -> SANDRONE_MODEL -> Codex 默认配置
+shell 环境变量 -> agents/config/<kind>.json -> workspace .env -> Codex 默认配置
 ```
 
 如需指定其他 env 文件：
@@ -152,7 +152,9 @@ SANDRONE_AGENT_IGNORE_USER_CONFIG=0
 
 ### Agent / Reviewer 使用 Codex API provider
 
-默认 agent 和 reviewer backend 都是 `codex-cli`。如果希望某些无人值守环节用指定 API key/base URL/model，可以使用 `codex-api`。它仍然启动 Codex CLI，因此保留读文件、改代码、运行命令、sandbox 和结构化输出能力；默认使用 `approval_policy="never"`，不会要求人工审批：
+默认 agent 和 reviewer backend 都是 `codex-cli`。如果希望某些无人值守环节用指定 API key/base URL/model，可以在对应 `agents/config/<kind>.json` 里设置 `agent_backend: "codex-api"`、`api_key`、`base_url` 和 `model`。它仍然启动 Codex CLI，因此保留读文件、改代码、运行命令、sandbox 和结构化输出能力；默认使用 `approval_policy="never"`，不会要求人工审批。
+
+也可以用 `.env` 作为兼容兜底：
 
 ```bash
 SANDRONE_AGENT_BACKEND=codex-api
@@ -200,4 +202,4 @@ gh auth status
 gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
-如果使用内部平台，可以替换 `tools/issue-update.sh`、`tools/pr-create.sh` 和 `tools/pr-status.sh`，只要遵守 [connectors.md](connectors.md) 的契约即可。
+如果使用内部平台，可以替换 `tools/issue-update.sh`、`tools/pr-create.sh`、`tools/pr-status.sh`、`tools/merge-plan.sh` 和 `tools/pr-merge.sh`，只要遵守 [connectors.md](connectors.md) 的契约即可。

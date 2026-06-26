@@ -442,7 +442,10 @@ fn spawn_reviewer_worker(
     reviewer: &ReviewDefinition,
     attempt: u32,
 ) -> Result<u32> {
-    let state_dir = review_job_state_dir(&request.request_id, stage, attempt, reviewer.file_stem);
+    let state_dir =
+        create_review_job_run_state_dir(&request.request_id, stage, attempt, reviewer.file_stem)?;
+    let compat_state_dir =
+        review_attempt_state_dir(&request.request_id, stage, attempt).join(reviewer.file_stem);
     let legacy_state_dir =
         legacy_review_job_state_dir(&request.request_id, stage, attempt, reviewer.file_stem);
     fs::create_dir_all(&state_dir)?;
@@ -455,6 +458,10 @@ fn spawn_reviewer_worker(
             reviewer.file_stem,
         )),
     )?;
+    mirror_runtime_file(
+        &review_job_stdout_path(&request.request_id, stage, attempt, reviewer.file_stem),
+        &compat_state_dir.join("stdout.log"),
+    )?;
     let stderr = create_truncated_runtime_file(
         review_job_stderr_path(&request.request_id, stage, attempt, reviewer.file_stem),
         Some(&legacy_review_job_stderr_path(
@@ -463,6 +470,10 @@ fn spawn_reviewer_worker(
             attempt,
             reviewer.file_stem,
         )),
+    )?;
+    mirror_runtime_file(
+        &review_job_stderr_path(&request.request_id, stage, attempt, reviewer.file_stem),
+        &compat_state_dir.join("stderr.log"),
     )?;
     let exit_path = review_job_exit_path(&request.request_id, stage, attempt, reviewer.file_stem);
     let legacy_exit_path =
@@ -476,7 +487,9 @@ fn spawn_reviewer_worker(
         &hook_log_path,
         Some(&legacy_hook_log_path),
     )?);
+    mirror_runtime_file(&hook_log_path, &compat_state_dir.join("hook.log"))?;
     drop(create_truncated_runtime_file(&events_log_path, None)?);
+    mirror_runtime_file(&events_log_path, &compat_state_dir.join("events.log"))?;
     remove_runtime_file(&exit_path, Some(&legacy_exit_path))?;
     if legacy_state_dir.exists() {
         fs::create_dir_all(&legacy_state_dir)?;
@@ -584,6 +597,7 @@ write_exit "$code"
             reviewer.file_stem,
         )),
     )?;
+    fs::write(compat_state_dir.join("pid"), format!("{}\n", child.id()))?;
     write_job_runtime(
         job_runtime_path(&state_dir),
         &JobRuntime {
@@ -1028,11 +1042,11 @@ fn legacy_review_job_hook_log_path(
 }
 
 fn review_job_pid_path(request_id: &str, stage: &str, attempt: u32, file_stem: &str) -> PathBuf {
-    review_job_state_dir(request_id, stage, attempt, file_stem).join("pid")
+    job_pid_path(&review_job_state_dir(request_id, stage, attempt, file_stem))
 }
 
 fn review_job_exit_path(request_id: &str, stage: &str, attempt: u32, file_stem: &str) -> PathBuf {
-    review_job_state_dir(request_id, stage, attempt, file_stem).join("exit")
+    job_exit_path(&review_job_state_dir(request_id, stage, attempt, file_stem))
 }
 
 fn existing_review_job_exit_path(
@@ -1048,11 +1062,11 @@ fn existing_review_job_exit_path(
 }
 
 fn review_job_stdout_path(request_id: &str, stage: &str, attempt: u32, file_stem: &str) -> PathBuf {
-    review_job_state_dir(request_id, stage, attempt, file_stem).join("stdout.log")
+    job_stdout_path(&review_job_state_dir(request_id, stage, attempt, file_stem))
 }
 
 fn review_job_stderr_path(request_id: &str, stage: &str, attempt: u32, file_stem: &str) -> PathBuf {
-    review_job_state_dir(request_id, stage, attempt, file_stem).join("stderr.log")
+    job_stderr_path(&review_job_state_dir(request_id, stage, attempt, file_stem))
 }
 
 fn review_job_hook_log_path(
@@ -1061,7 +1075,7 @@ fn review_job_hook_log_path(
     attempt: u32,
     file_stem: &str,
 ) -> PathBuf {
-    review_job_state_dir(request_id, stage, attempt, file_stem).join("hook.log")
+    job_hook_log_path(&review_job_state_dir(request_id, stage, attempt, file_stem))
 }
 
 fn read_review_job_pid(
@@ -1323,11 +1337,21 @@ fn run_single_reviewer(
     } else {
         let timeout = reviewer_timeout_duration();
         let mut command = Command::new("sh");
+        let reviewer_kind = reviewer_config_kind(reviewer.name);
         command
             .arg(reviewer.tool)
             .current_dir(".")
             .env("SANDRONE_REVIEW_STAGE", stage)
             .env("SANDRONE_REVIEWER", reviewer.name)
+            .env("SANDRONE_REVIEWER_KIND", reviewer_kind)
+            .env(
+                "SANDRONE_REVIEWER_CONFIG_DIR",
+                absolute_path_string("agents/config"),
+            )
+            .env(
+                "SANDRONE_REVIEWER_CONFIG_PATH",
+                absolute_path_string(format!("agents/config/{reviewer_kind}.json")),
+            )
             .env("SANDRONE_WORKSPACE", absolute_path_string("."))
             .env("SANDRONE_ENV_FILE", absolute_path_string(".env"))
             .env("SANDRONE_TARGET_REPO", absolute_path_string(DEV_REPO))
@@ -1485,6 +1509,17 @@ fn run_single_reviewer(
     })
 }
 
+fn reviewer_config_kind(reviewer: &str) -> &'static str {
+    match reviewer {
+        "PlanReviewer" => "plan-reviewer",
+        "DecompositionReviewer" => "decomposition-reviewer",
+        "TestReviewer" => "test-reviewer",
+        "DesignReviewer" => "design-reviewer",
+        "IntegrationReviewer" => "integration-reviewer",
+        _ => "plan-reviewer",
+    }
+}
+
 fn prepare_review_context(
     request: &Request,
     stage: &str,
@@ -1496,6 +1531,12 @@ fn prepare_review_context(
         .join(stage)
         .join(format!("{attempt:03}"))
         .join(slugify(reviewer.name));
+    let context =
+        if review_job_state_dir(&request.request_id, stage, attempt, reviewer.file_stem).exists() {
+            runtime_review_context_dir(&request.request_id, stage, attempt, reviewer.file_stem)
+        } else {
+            context
+        };
     if context.exists() {
         fs::remove_dir_all(&context)?;
     }

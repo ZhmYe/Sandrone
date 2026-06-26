@@ -24,6 +24,7 @@ pub const ISSUE_AGENT_SCRIPT: &str = include_str!("../templates/scripts/issue-ag
 pub const REBASE_AGENT_SCRIPT: &str = include_str!("../templates/scripts/rebase-agent.sh");
 pub const PR_CREATE_SCRIPT: &str = include_str!("../templates/scripts/pr-create.sh");
 pub const PR_STATUS_SCRIPT: &str = include_str!("../templates/scripts/pr-status.sh");
+pub const PR_MERGE_SCRIPT: &str = include_str!("../templates/scripts/pr-merge.sh");
 pub const CHECK_FORMAT_SCRIPT: &str = include_str!("../templates/scripts/check-format.sh");
 pub const REVIEW_TOOL_SCRIPT: &str = include_str!("../templates/scripts/review-tool.sh");
 pub const CODEX_BIN_RESOLVER_SCRIPT: &str =

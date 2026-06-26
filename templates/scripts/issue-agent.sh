@@ -416,6 +416,7 @@ render_agent_prompt() {
   printf 'Env file: %s\n' "$env_file"
   printf 'Agent backend: %s\n' "$agent_backend"
   printf 'Ignore user Codex config: %s\n' "$(resolve_agent_ignore_user_config)"
+  printf 'Resume session id: %s\n' "${SANDRONE_AGENT_RESUME_SESSION_ID:-}"
   printf 'Resolved model: %s\n' "${agent_model:-inherited}"
   printf 'Resolved reasoning effort: %s\n' "${agent_reasoning_effort:-inherited}"
   printf 'Review stage: %s\n' "${review_stage:-none}"
@@ -460,12 +461,20 @@ run_codex_agent() {
     exit 1
   fi
   codex_llm_api_key=""
-  set -- \
-    --cd "$workspace" \
-    --skip-git-repo-check \
-    -c 'approval_policy="never"' \
-    -c 'shell_environment_policy.inherit="all"' \
-    --sandbox workspace-write
+  resume_session_id="${SANDRONE_AGENT_RESUME_SESSION_ID:-}"
+  if [ -n "$resume_session_id" ]; then
+    set -- \
+      --skip-git-repo-check \
+      -c 'approval_policy="never"' \
+      -c 'shell_environment_policy.inherit="all"'
+  else
+    set -- \
+      --cd "$workspace" \
+      --skip-git-repo-check \
+      -c 'approval_policy="never"' \
+      -c 'shell_environment_policy.inherit="all"' \
+      --sandbox workspace-write
+  fi
   if truthy "$(resolve_agent_ignore_user_config)"; then
     set -- "$@" --ignore-user-config
   fi
@@ -511,9 +520,17 @@ run_codex_agent() {
   fi
 
   if [ "$agent_backend" = "codex-api" ]; then
-    LLM_API_KEY="$codex_llm_api_key" nohup "$codex_bin" exec "$@" - < "$agent_prompt_file"
+    if [ -n "$resume_session_id" ]; then
+      LLM_API_KEY="$codex_llm_api_key" nohup "$codex_bin" exec resume "$@" "$resume_session_id" - < "$agent_prompt_file"
+    else
+      LLM_API_KEY="$codex_llm_api_key" nohup "$codex_bin" exec "$@" - < "$agent_prompt_file"
+    fi
   else
-    nohup "$codex_bin" exec "$@" - < "$agent_prompt_file"
+    if [ -n "$resume_session_id" ]; then
+      nohup "$codex_bin" exec resume "$@" "$resume_session_id" - < "$agent_prompt_file"
+    else
+      nohup "$codex_bin" exec "$@" - < "$agent_prompt_file"
+    fi
   fi
 }
 

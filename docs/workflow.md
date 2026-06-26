@@ -39,6 +39,8 @@ flowchart TD
     FIN --> WF["wait-finish"]
     WF --> PS["pr-status"]
     PS --> DONE["finished"]
+    WF -. "safe + ready + auto" .-> PM["pr-merge"]
+    PM --> DONE
     WF -. "conflict or stale base" .-> REF["pr-refresh"]
     REF --> IR{"integration review"}
     IR -- "rejected" --> REF
@@ -55,6 +57,8 @@ flowchart TD
 4. 在并发上限内派发 agent。
 5. 对漏掉 hook 的 request 执行兜底推进；如果 review worker 已结束，会收敛 summary、gate 和下一步状态。
 6. code-review 通过后停在 `wait-update-pr`。
+
+默认 tick 不会 merge。开启 `auto_merge`、设置 `SANDRONE_AUTO_MERGE=1` 或单次传入 `--auto-merge` 后，tick 每轮最多处理一个 `wait-finish` request。合并前仍必须由队列判断和 PR connector 同时确认安全；合并一个 PR 后，下一轮 tick 会重新评估剩余 PR。
 
 `sdr advance --request_id <REQ>` 是单 request 推进器，通常由 agent wrapper hook 或 review worker hook 自动调用。它不抓 issue，也不扫描全部 request，只在 per-request lock 下完成当前 request 的 gate、worktree、review worker 收敛、下一 phase 派发或状态落盘。
 
@@ -102,12 +106,14 @@ sdr advance --request_id REQ-0001 --max-attempts 20
 
 ```toml
 parallel_limit = 1
+auto_merge = false
 ```
 
 可以修改 `.sandrone/config.toml`，或单次运行：
 
 ```bash
 sdr tick --parallel-limit 2
+sdr tick --auto-merge
 ```
 
 调度器会统计正在运行的 decomposition、planning、implementation、rebase agent 以及 review worker。只有剩余槽位才会派发新的 request/slice。运行中的 request 不会重复派发。

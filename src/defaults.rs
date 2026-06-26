@@ -26,6 +26,7 @@ pub(crate) fn write_config(repo_name: &str, git_url: &str, base_branch: &str) ->
         git_url: git_url.to_string(),
         base_branch: base_branch.to_string(),
         parallel_limit: 1,
+        auto_merge: false,
     };
     rewrite_config(&config)
 }
@@ -34,12 +35,13 @@ pub(crate) fn rewrite_config(config: &Config) -> Result<()> {
     fs::write(
         CONFIG_PATH,
         format!(
-            "schema_version = {}\nrepo_name = \"{}\"\ngit_url = \"{}\"\nbase_branch = \"{}\"\nparallel_limit = {}\n",
+            "schema_version = {}\nrepo_name = \"{}\"\ngit_url = \"{}\"\nbase_branch = \"{}\"\nparallel_limit = {}\nauto_merge = {}\n",
             FRAMEWORK_SCHEMA_VERSION,
             toml_escape(&config.repo_name),
             toml_escape(&config.git_url),
             toml_escape(&config.base_branch),
-            config.parallel_limit
+            config.parallel_limit,
+            if config.auto_merge { "true" } else { "false" }
         ),
     )?;
     Ok(())
@@ -459,12 +461,23 @@ pub(crate) fn write_default_pr_status_tool() -> Result<()> {
     write_executable_file(PR_STATUS_TOOL, default_pr_status_tool_content())
 }
 
+pub(crate) fn write_default_pr_merge_tool() -> Result<()> {
+    if Path::new(PR_MERGE_TOOL).exists() {
+        return Ok(());
+    }
+    write_executable_file(PR_MERGE_TOOL, default_pr_merge_tool_content())
+}
+
 fn default_pr_tool_content() -> &'static str {
     assets::PR_CREATE_SCRIPT
 }
 
 fn default_pr_status_tool_content() -> &'static str {
     assets::PR_STATUS_SCRIPT
+}
+
+fn default_pr_merge_tool_content() -> &'static str {
+    assets::PR_MERGE_SCRIPT
 }
 
 pub(crate) fn write_default_review_tools() -> Result<()> {
@@ -664,6 +677,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             path: PR_STATUS_TOOL,
             example_path: PR_STATUS_TOOL_EXAMPLE,
             content: default_pr_status_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
+            path: PR_MERGE_TOOL,
+            example_path: PR_MERGE_TOOL_EXAMPLE,
+            content: default_pr_merge_tool_content().to_string(),
             executable: true,
         },
         DefaultManagedAsset {

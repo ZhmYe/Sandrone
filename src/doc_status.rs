@@ -59,6 +59,44 @@ pub(crate) fn mark_phase_document_submitted(request: &Request, phase: AgentPhase
     Ok(())
 }
 
+pub(crate) fn reset_phase_document_for_agent_dispatch(
+    request: &Request,
+    phase: AgentPhase,
+) -> Result<()> {
+    let path = phase_document_path(request, phase);
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let current_fields = frontmatter_fields(&content).unwrap_or_default();
+    let format_update = Some(FormatStatusUpdate {
+        status: default_format_status(phase).to_string(),
+        exit_code: String::new(),
+    });
+    let gate_update = dispatch_reset_gate(phase).map(|gate| GateStatusUpdate {
+        gate,
+        status: "draft",
+        by: "",
+        source: "agent-dispatch",
+        comment: "reset before agent dispatch",
+        body_sha256: "",
+    });
+    let updates = document_status_updates(
+        request,
+        phase,
+        "draft",
+        false,
+        &current_fields,
+        format_update,
+        gate_update,
+    );
+    let updated = replace_frontmatter(&content, &updates);
+    if content != updated {
+        fs::write(path, updated)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn update_change_doc_format_status(
     request: &Request,
     status: &str,
@@ -355,6 +393,15 @@ struct GateStatusUpdate<'a> {
     source: &'a str,
     comment: &'a str,
     body_sha256: &'a str,
+}
+
+fn dispatch_reset_gate(phase: AgentPhase) -> Option<&'static str> {
+    match phase {
+        AgentPhase::Decomposition => Some("decomposition"),
+        AgentPhase::Planning => Some("plan"),
+        AgentPhase::Implementation => Some("change-doc"),
+        AgentPhase::Rebase => None,
+    }
 }
 
 fn upsert_document_status(

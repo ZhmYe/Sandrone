@@ -9,7 +9,7 @@ cd /path/to/workspace
 sdr tick
 ```
 
-`tick` 不会运行 `finish`，也不会 merge。它只扫描、派发、review、修复和推进到 `wait-update-pr`。
+`tick` 不会运行 `finish`。默认也不会 merge；只有显式开启 `auto_merge` 后，才会在 `wait-finish` request 中每轮最多选择一个执行安全合并检查。
 
 建议第一次先手动运行：
 
@@ -50,6 +50,30 @@ sdr pr-status --request_id REQ-0001
 ```
 
 只有 `tools/pr-status.sh` 返回 `merged`，框架才会标记 `finished`。如果返回 `open`，保持 `wait-finish`；如果返回 `missing` 或 `closed`，回到 `wait-update-pr`。
+
+## 可选自动合并
+
+默认流程不会自动 merge。需要机器人合并时，可以单次显式运行：
+
+```bash
+sdr pr-merge --request_id REQ-0001 --auto-merge
+```
+
+也可以开启 tick 调度：
+
+```toml
+# .sandrone/config.toml
+auto_merge = true
+```
+
+或：
+
+```bash
+SANDRONE_AUTO_MERGE=1 sdr tick
+sdr tick --auto-merge
+```
+
+自动合并调度每轮最多处理一个 `wait-finish` request。`pr-merge` 只有在 `change-doc` gate 已通过、队列决策为 `ready_for_merge`、`tools/pr-status.sh` 返回 `safe` 时才会调用 `tools/pr-merge.sh`。`open`、`unsafe`、`unsupported`、缺少开关或队列未就绪都会只记录 scheduler decision，不会执行 merge。
 
 ## PR Refresh / Rebase
 

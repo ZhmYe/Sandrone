@@ -8,6 +8,7 @@ pub(crate) fn load_config() -> Result<Config> {
     let mut git_url = String::new();
     let mut base_branch = "main".to_string();
     let mut parallel_limit = 1;
+    let mut auto_merge = false;
 
     for line in content.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -25,6 +26,7 @@ pub(crate) fn load_config() -> Result<Config> {
                     parallel_limit = parsed;
                 }
             }
+            "auto_merge" => auto_merge = parse_config_bool(value).unwrap_or(false),
             _ => {}
         }
     }
@@ -35,7 +37,16 @@ pub(crate) fn load_config() -> Result<Config> {
         git_url,
         base_branch,
         parallel_limit,
+        auto_merge,
     })
+}
+
+fn parse_config_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 pub(crate) fn load_requests() -> Result<Vec<Request>> {

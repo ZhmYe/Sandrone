@@ -43,6 +43,8 @@ agent 必须在退出前自检 reviewer 会检查的内容。明显会产生 cri
 
 agent 成功完成当前 phase 后，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 的 YAML frontmatter。状态头必须包含 `request_id`、当前 `agent_phase`、`agent_status: submitted` 和 `agent_ready_for_review: true`。implementation/rebase 还应写入简洁的 `format_check_status` 和 `format_check_exit_code`。Codex CLI 可能因为本轮早期工具命令失败而最终返回非零；外层 `advance` 只有在非零退出且文档提交状态有效时才会继续提交 review gate。没有有效文档状态、状态不匹配或产物不完整时必须 block。这个状态头不是 approval，也不能替代 reviewer。
 
+同一 phase 被 reviewer 打回后，默认 `codex-cli`/`codex-api` connector 会尽量用 `codex exec resume` 复用上一轮 agent session。wrapper 会从 stdout/stderr 中提取 `session id` 并写入 `.sandrone/state/agents/<REQ>.<phase>.session`；下一轮只在状态为对应 `*-review-rejected` 时读取它。复用 session 只是节省上下文和保留已形成判断，本轮 prompt、最新 reviewer finding、当前文件和外层 gate 仍是权威。
+
 默认 agent backend 是 `codex-cli`，也可以让 Codex CLI 使用指定 API provider：
 
 - `SANDRONE_AGENT_BACKEND=codex-cli`：默认值，调用 Codex CLI。
@@ -191,7 +193,33 @@ existing<TAB>url
 status<TAB>url<TAB>detail
 ```
 
-推荐 `status`：`open`、`missing`、`merged`、`closed`、`unknown`。只有 `merged` 才能把 request 标记为 `finished`。
+交付观察状态推荐值：`open`、`missing`、`merged`、`closed`、`unknown`。只有 `merged` 才能把 request 标记为 `finished`。
+
+如果要让 `sdr pr-merge` 自动合并，`pr-status` 还必须作为合并安全探测脚本返回：
+
+- `safe`：PR 仍匹配 base/head，平台检查通过，分支未过期，没有冲突或策略阻塞，可以进入合并连接器。
+- `unsafe`：发现冲突、过期、检查失败、必需评审未完成或其他不可合并原因。
+- `unsupported`：当前平台或脚本无法可靠判断是否可安全合并。
+
+旧状态 `open` 不会被当成 `safe`。这能避免普通“PR 打开中”被误判为“可以自动合并”。
+
+### `tools/pr-merge.sh`
+
+显式自动合并 connector。只有同时满足以下条件时，Sandrone 才会调用它：
+
+- `auto_merge` 开关已显式开启，例如 `--auto-merge`、`.sandrone/config.toml` 或 `SANDRONE_AUTO_MERGE=1`。
+- 调度/队列判断为 `ready_for_merge`。
+- `tools/pr-status.sh` 返回 `safe<TAB>url<TAB>detail`。
+- `change-doc` gate 已通过。
+
+成功或可恢复阻塞 stdout：
+
+```text
+merged<TAB>url<TAB>detail
+blocked<TAB>url<TAB>detail
+```
+
+只有 `merged` 会标记 finished，`blocked` 不会标记 finished。connector 必须在执行前重新确认 PR 仍匹配 base/head；如果平台不能保证安全合并，应返回 `blocked` 或非零失败，而不是强行 merge。每次判断都会写入 `.sandrone/state/scheduler/decisions/*.json`，便于后续前端和机器人审计。
 
 ## PR Body
 

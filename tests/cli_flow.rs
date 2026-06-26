@@ -160,6 +160,53 @@ fn force_request_state(
         .expect("requests state should be writable");
 }
 
+fn prepare_wait_finish_request(workspace: &Path, request_id: &str, change_name: &str) {
+    assert_success(&run(
+        workspace,
+        &["plan", "--name", change_name, "--request_id", request_id],
+    ));
+    assert_success(&run(
+        workspace,
+        &["submit", "--request_id", request_id, "--gate", "plan"],
+    ));
+    assert_success(&run(
+        workspace,
+        &[
+            "approve",
+            "--request_id",
+            request_id,
+            "--gate",
+            "plan",
+            "--by",
+            "tester",
+        ],
+    ));
+    assert_success(&run(workspace, &["start", "--request_id", request_id]));
+    assert_success(&run(
+        workspace,
+        &["submit", "--request_id", request_id, "--gate", "change-doc"],
+    ));
+    assert_success(&run(
+        workspace,
+        &[
+            "approve",
+            "--request_id",
+            request_id,
+            "--gate",
+            "change-doc",
+            "--by",
+            "tester",
+        ],
+    ));
+    force_request_state(
+        workspace,
+        request_id,
+        "wait-finish",
+        &format!("codex/{}", request_id.to_ascii_lowercase()),
+        &format!("dev/worktrees/{request_id}"),
+    );
+}
+
 fn git_success(workspace: &Path, args: &[&str]) -> bool {
     Command::new("git")
         .args(args)
@@ -342,7 +389,10 @@ fn help_lists_state_and_validation_commands() {
     assert!(stdout.contains("  dashboard"));
     assert!(stdout.contains("  status [REQ-0001]"));
     assert!(stdout.contains("  validate"));
+    assert!(stdout.contains("tick [--request_id <REQ-0001>]"));
+    assert!(stdout.contains("[--auto-merge]"));
     assert!(stdout.contains("  pr-status --request_id <REQ-0001>"));
+    assert!(stdout.contains("  pr-merge --request_id <REQ-0001>"));
     assert!(stdout.contains("  pr-refresh --request_id <REQ-0001>"));
     assert!(stdout.contains("  integration-review --request_id <REQ-0001>"));
 }
@@ -411,6 +461,7 @@ fn templates_are_external_assets_not_embedded_in_main() {
         "templates/scripts/review-tool.sh",
         "templates/scripts/pr-create.sh",
         "templates/scripts/pr-status.sh",
+        "templates/scripts/pr-merge.sh",
         "src/assets.rs",
         "src/dashboard.rs",
         "src/delivery.rs",
@@ -521,6 +572,8 @@ fn skill_requires_install_or_verify_cli_before_workspace_commands() {
     assert!(SOURCE_SKILL.contains("自动化子 agent 默认不继承用户个人 Codex config"));
     assert!(SOURCE_SKILL.contains("--parallel-limit"));
     assert!(SOURCE_SKILL.contains("parallel_limit = 1"));
+    assert!(SOURCE_SKILL.contains("auto_merge = false"));
+    assert!(SOURCE_SKILL.contains("sdr tick --auto-merge"));
     assert!(SOURCE_SKILL.contains("SANDRONE_REVIEW_CONTEXT"));
     assert!(SOURCE_SKILL.contains("不得读取其他 reviewer 输出"));
     assert!(SOURCE_SKILL.contains("SANDRONE_AGENT_STATUS_DOC"));
@@ -575,6 +628,7 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     let config = fs::read_to_string(workspace.join(".sandrone/config.toml"))
         .expect("config should be readable");
     assert!(config.contains("parallel_limit = 1"));
+    assert!(config.contains("auto_merge = false"));
 
     assert!(workspace.join("dev/repo/.git").is_dir());
     assert!(workspace.join("tools/issue-update.sh").is_file());
@@ -586,6 +640,7 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(workspace.join("tools/issue-agent.sh").is_file());
     assert!(workspace.join("tools/rebase-agent.sh").is_file());
     assert!(workspace.join("tools/pr-status.sh").is_file());
+    assert!(workspace.join("tools/pr-merge.sh").is_file());
     assert!(workspace.join("tools/prompts/plan-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/test-reviewer.md").is_file());
     assert!(workspace.join("tools/prompts/design-reviewer.md").is_file());
@@ -613,6 +668,7 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
         ("tools/rebase-agent.sh", "tools/rebase-agent.example.sh"),
         ("tools/pr-create.sh", "tools/pr-create.example.sh"),
         ("tools/pr-status.sh", "tools/pr-status.example.sh"),
+        ("tools/pr-merge.sh", "tools/pr-merge.example.sh"),
         ("tools/plan-review.sh", "tools/plan-review.example.sh"),
         ("tools/test-review.sh", "tools/test-review.example.sh"),
         ("tools/design-review.sh", "tools/design-review.example.sh"),
@@ -674,6 +730,9 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(issue_agent.contains("SANDRONE_AGENT_PHASE"));
     assert!(issue_agent.contains("trap '' HUP"));
     assert!(issue_agent.contains("nohup \"$codex_bin\" exec"));
+    assert!(issue_agent.contains("SANDRONE_AGENT_RESUME_SESSION_ID"));
+    assert!(issue_agent.contains("exec resume"));
+    assert!(issue_agent.contains("Resume session id"));
     assert!(issue_agent.contains("SANDRONE_CODEX_BIN"));
     assert!(issue_agent.contains("SANDRONE_CODEX_APP"));
     assert!(issue_agent.contains("resolve_codex_bin"));
@@ -780,6 +839,13 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
         fs::read_to_string(workspace.join("tools/pr-status.sh")).expect("pr status tool readable");
     assert!(pr_status_tool.contains("Connector contract"));
     assert!(pr_status_tool.contains("status<TAB>url<TAB>detail"));
+    let pr_merge_tool =
+        fs::read_to_string(workspace.join("tools/pr-merge.sh")).expect("pr merge tool readable");
+    assert!(pr_merge_tool.contains("Connector contract"));
+    assert!(pr_merge_tool.contains("ready_for_merge"));
+    assert!(pr_merge_tool.contains("SANDRONE_PR_STATUS"));
+    assert!(pr_merge_tool.contains("merged<TAB>url<TAB>detail"));
+    assert!(pr_merge_tool.contains("blocked<TAB>url<TAB>detail"));
     let review_tool =
         fs::read_to_string(workspace.join("tools/plan-review.sh")).expect("review tool readable");
     assert!(review_tool.contains("Connector contract"));
@@ -848,6 +914,7 @@ fn new_name_creates_framework_and_empty_target_repo_only() {
     assert!(env_example.contains("SANDRONE_CODEX_WIRE_API=responses"));
     assert!(env_example.contains("SANDRONE_CODEX_MODEL_CATALOG_JSON="));
     assert!(env_example.contains("SANDRONE_REVIEW_TIMEOUT_SECONDS=1800"));
+    assert!(env_example.contains("SANDRONE_AUTO_MERGE=0"));
     assert!(env_example.contains("SANDRONE_AGENT_IGNORE_USER_CONFIG=1"));
     let test_review_prompt = fs::read_to_string(workspace.join("tools/prompts/test-reviewer.md"))
         .expect("test reviewer prompt readable");
@@ -1994,6 +2061,10 @@ fn start_auto_pulls_target_repo_before_creating_worktree() {
         &workspace,
         &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
     ));
+    write_executable(
+        &workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    );
     assert_success(&run(
         &workspace,
         &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
@@ -2061,6 +2132,10 @@ fn start_blocks_when_target_repo_pull_fails_before_worktree_creation() {
         &workspace,
         &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
     ));
+    write_executable(
+        &workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    );
     assert_success(&run(
         &workspace,
         &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
@@ -2406,6 +2481,312 @@ fn finish_reports_existing_pr_from_pr_connector() {
 }
 
 #[test]
+fn pr_merge_requires_auto_merge_ready_queue_and_safe_status() {
+    let workspace = temp_workspace("pr-merge-gate");
+    let change_name = format!("{}-merge-gate-feature", current_date());
+    let origin = create_bare_origin_with_master("pr-merge-gate-origin");
+    assert_success(&run(
+        &workspace,
+        &[
+            "new",
+            "--url",
+            origin.to_str().expect("origin should be utf-8"),
+        ],
+    ));
+    assert_git_success(&workspace.join("dev/repo"), &["checkout", "master"]);
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'github:owner/repo#45\\tgithub\\tMerge gate feature\\tBody\\thttps://github.com/owner/repo/issues/45\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-create.sh"),
+        "#!/usr/bin/env sh\nset -eu\nprintf 'existing\\thttps://example.test/pr/merge-gate\\n'\n",
+    )
+    .expect("pr connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'safe\\thttps://example.test/pr/merge-gate\\tchecks green and branch current\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-merge.sh"),
+        "#!/usr/bin/env sh\nset -eu\ntest \"$SANDRONE_AUTO_MERGE_ENABLED\" = true\ntest \"$SANDRONE_QUEUE_DECISION\" = ready_for_merge\ntest \"$SANDRONE_PR_STATUS\" = safe\nprintf '%s\\n' \"$SANDRONE_SCHEDULER_DECISION_ID\" >> .sandrone/state/pr-merge-called.log\nprintf 'merged\\thttps://example.test/pr/merge-gate\\tmerged after safety probe\\n'\n",
+    )
+    .expect("pr merge connector should be writable");
+
+    assert_success(&run(&workspace, &["update"]));
+    assert_success(&run(
+        &workspace,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "plan",
+            "--by",
+            "tester",
+        ],
+    ));
+    assert_success(&run(&workspace, &["start", "--request_id", "REQ-0001"]));
+    let worktree = workspace.join("dev/worktrees/REQ-0001");
+    assert_git_success(&worktree, &["config", "user.name", "Test User"]);
+    assert_git_success(&worktree, &["config", "user.email", "test@example.local"]);
+    fs::write(worktree.join("merge-gate.txt"), "implemented\n")
+        .expect("feature should be writable");
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "change-doc"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "change-doc",
+            "--by",
+            "tester",
+        ],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "finish",
+            "--request_id",
+            "REQ-0001",
+            "--message",
+            "feat: deliver merge gate feature",
+        ],
+    ));
+
+    let skipped = run(&workspace, &["pr-merge", "--request_id", "REQ-0001"]);
+    assert_success(&skipped);
+    let skipped_stdout = String::from_utf8_lossy(&skipped.stdout);
+    assert!(skipped_stdout.contains("auto merge disabled"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists()
+    );
+
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'unsafe\\thttps://example.test/pr/merge-gate\\tmerge conflict detected\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    let unsafe_merge = run(
+        &workspace,
+        &["pr-merge", "--request_id", "REQ-0001", "--auto-merge"],
+    );
+    assert_success(&unsafe_merge);
+    let unsafe_stdout = String::from_utf8_lossy(&unsafe_merge.stdout);
+    assert!(unsafe_stdout.contains("expected safe before merge"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists()
+    );
+
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'unsupported\\thttps://example.test/pr/merge-gate\\tplatform does not expose merge safety\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    let unsupported_merge = run(
+        &workspace,
+        &["pr-merge", "--request_id", "REQ-0001", "--auto-merge"],
+    );
+    assert_success(&unsupported_merge);
+    let unsupported_stdout = String::from_utf8_lossy(&unsupported_merge.stdout);
+    assert!(unsupported_stdout.contains("expected safe before merge"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists()
+    );
+
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'safe\\thttps://example.test/pr/merge-gate\\tchecks green and branch current\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    let queued_later = run(
+        &workspace,
+        &[
+            "pr-merge",
+            "--request_id",
+            "REQ-0001",
+            "--queue-decision",
+            "blocked_by_priority",
+            "--auto-merge",
+        ],
+    );
+    assert_success(&queued_later);
+    let queued_stdout = String::from_utf8_lossy(&queued_later.stdout);
+    assert!(queued_stdout.contains("expected ready_for_merge"));
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists()
+    );
+
+    let merged = run(
+        &workspace,
+        &["pr-merge", "--request_id", "REQ-0001", "--auto-merge"],
+    );
+    assert_success(&merged);
+    let merged_stdout = String::from_utf8_lossy(&merged.stdout);
+    assert!(merged_stdout.contains("PR merge check for REQ-0001: merged"));
+    assert!(merged_stdout.contains("request status: finished"));
+    assert!(
+        workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .is_file()
+    );
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("\tfinished\t"));
+    let decisions = fs::read_dir(workspace.join(".sandrone/state/scheduler/decisions"))
+        .expect("decision dir should be readable")
+        .map(|entry| {
+            fs::read_to_string(entry.expect("decision entry readable").path())
+                .expect("decision file readable")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(decisions.contains("\"auto_merge_enabled\": false"));
+    assert!(decisions.contains("\"pr_status\": \"unsafe\""));
+    assert!(decisions.contains("\"pr_status\": \"unsupported\""));
+    assert!(decisions.contains("\"queue_decision\": \"blocked_by_priority\""));
+    assert!(decisions.contains("\"action\": \"merged\""));
+}
+
+#[test]
+fn tick_auto_merge_stays_off_until_config_or_flag_enables_it() {
+    let workspace = temp_workspace("tick-auto-merge-config");
+    let change_name = format!("{}-auto-merge-config", current_date());
+    assert_success(&run(&workspace, &["new", "--name", "auto-merge-config"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tAuto merge config\\tBody\\thttps://example.test/1\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'safe\\thttps://example.test/pr/config\\tready to merge\\n'\n",
+    )
+    .expect("pr status connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-merge.sh"),
+        "#!/usr/bin/env sh\nset -eu\nprintf '%s\\n' \"$SANDRONE_REQUEST_ID\" >> .sandrone/state/pr-merge-called.log\nprintf 'merged\\thttps://example.test/pr/config\\tmerged by config scheduler\\n'\n",
+    )
+    .expect("pr merge connector should be writable");
+    assert_success(&run(&workspace, &["update"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\n",
+    )
+    .expect("issue connector should be writable");
+    prepare_wait_finish_request(&workspace, "REQ-0001", &change_name);
+
+    let disabled = run(&workspace, &["tick"]);
+    assert_success(&disabled);
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists(),
+        "tick must not auto-merge while config and flags are disabled"
+    );
+
+    let config_path = workspace.join(".sandrone/config.toml");
+    let config = fs::read_to_string(&config_path).expect("config should be readable");
+    fs::write(
+        &config_path,
+        config.replace("auto_merge = false", "auto_merge = true"),
+    )
+    .expect("config should be writable");
+    let explicitly_disabled = run(&workspace, &["tick", "--no-auto-merge"]);
+    assert_success(&explicitly_disabled);
+    assert!(
+        !workspace
+            .join(".sandrone/state/pr-merge-called.log")
+            .exists(),
+        "--no-auto-merge must override config auto_merge=true"
+    );
+
+    let enabled = run(&workspace, &["tick"]);
+    assert_success(&enabled);
+    let enabled_stdout = String::from_utf8_lossy(&enabled.stdout);
+    assert!(enabled_stdout.contains("Tick merge scheduler checked REQ-0001: merged"));
+    let merge_log = fs::read_to_string(workspace.join(".sandrone/state/pr-merge-called.log"))
+        .expect("merge log should be readable");
+    assert_eq!(merge_log.lines().count(), 1);
+    assert!(merge_log.contains("REQ-0001"));
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("\tfinished\t"));
+}
+
+#[test]
+fn tick_auto_merge_processes_at_most_one_wait_finish_request_per_run() {
+    let workspace = temp_workspace("tick-auto-merge-one");
+    let first_change_name = format!("{}-auto-merge-one-a", current_date());
+    let second_change_name = format!("{}-auto-merge-one-b", current_date());
+    assert_success(&run(&workspace, &["new", "--name", "auto-merge-one"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nprintf 'external-1\\ttest\\tFirst auto merge\\tBody\\thttps://example.test/1\\nexternal-2\\ttest\\tSecond auto merge\\tBody\\thttps://example.test/2\\n'\n",
+    )
+    .expect("issue connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-status.sh"),
+        "#!/usr/bin/env sh\nprintf 'safe\\thttps://example.test/pr/%s\\tready to merge\\n' \"$SANDRONE_REQUEST_ID\"\n",
+    )
+    .expect("pr status connector should be writable");
+    fs::write(
+        workspace.join("tools/pr-merge.sh"),
+        "#!/usr/bin/env sh\nset -eu\nprintf '%s\\n' \"$SANDRONE_REQUEST_ID\" >> .sandrone/state/pr-merge-called.log\nprintf 'merged\\thttps://example.test/pr/%s\\tmerged one at a time\\n' \"$SANDRONE_REQUEST_ID\"\n",
+    )
+    .expect("pr merge connector should be writable");
+    assert_success(&run(&workspace, &["update"]));
+    fs::write(
+        workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\n",
+    )
+    .expect("issue connector should be writable");
+    prepare_wait_finish_request(&workspace, "REQ-0001", &first_change_name);
+    prepare_wait_finish_request(&workspace, "REQ-0002", &second_change_name);
+
+    let output = run(&workspace, &["tick", "--auto-merge"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Tick merge scheduler checked REQ-0001: merged"));
+    assert!(!stdout.contains("Tick merge scheduler checked REQ-0002"));
+    let merge_log = fs::read_to_string(workspace.join(".sandrone/state/pr-merge-called.log"))
+        .expect("merge log should be readable");
+    assert_eq!(merge_log.lines().count(), 1);
+    assert!(merge_log.contains("REQ-0001"));
+    assert!(!merge_log.contains("REQ-0002"));
+    let state = fs::read_to_string(workspace.join(".sandrone/state/requests.tsv"))
+        .expect("state should be readable");
+    assert!(state.contains("REQ-0001"));
+    assert!(state.contains("REQ-0002"));
+    assert_eq!(state.matches("\tfinished\t").count(), 1);
+    assert!(state.contains("REQ-0002"));
+    assert!(state.contains("wait-finish"));
+}
+
+#[test]
 fn pr_refresh_conflict_uses_rebase_agent_and_integration_review() {
     let workspace = temp_workspace("pr-refresh-conflict");
     let change_name = format!("{}-rebase-conflict-feature", current_date());
@@ -2697,6 +3078,168 @@ EOF
     assert!(change_doc.contains("PlanReviewer"));
     assert!(change_doc.contains("TestReviewer"));
     assert!(change_doc.contains("DesignReviewer"));
+}
+
+#[test]
+fn retrying_implementation_resets_change_doc_ready_status_before_agent_writes() {
+    let workspace = temp_workspace("retry-resets-ready");
+    let change_name = format!("{}-retry-resets-ready", current_date());
+    assert_success(&run(
+        &workspace,
+        &["new", "--name", "retry-resets-ready-test"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &["plan", "--name", &change_name, "--request_id", "REQ-0001"],
+    ));
+    write_executable(
+        &workspace.join("tools/issue-update.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    );
+    assert_success(&run(
+        &workspace,
+        &["submit", "--request_id", "REQ-0001", "--gate", "plan"],
+    ));
+    assert_success(&run(
+        &workspace,
+        &[
+            "approve",
+            "--request_id",
+            "REQ-0001",
+            "--gate",
+            "plan",
+            "--by",
+            "tester",
+        ],
+    ));
+    write_executable(
+        &workspace.join("tools/check-format.sh"),
+        "#!/usr/bin/env sh\nexit 0\n",
+    );
+    write_executable(
+        &workspace.join("tools/test-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"TestReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"tests ok\",\"process\":[\"checked tests\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    );
+    write_executable(
+        &workspace.join("tools/design-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":false,\"gate_unavailable\":false,\"decision\":\"rejected\",\"recommended_next_phase\":\"implementation\",\"summary\":\"needs another implementation round\",\"process\":[\"checked change doc\"],\"critical\":[],\"high\":[{\"title\":\"retry required\",\"evidence\":\"first implementation is intentionally rejected\",\"impact\":\"framework must dispatch another implementation round\",\"required_fix\":\"rerun implementation\",\"suggested_change\":\"Let the implementation agent revise change-doc and code before another code-review.\",\"verification\":\"The next implementation round starts from a draft change-doc status.\"}],\"warning\":[],\"info\":[]}'\n",
+    );
+    write_executable(
+        &workspace.join("tools/issue-agent.sh"),
+        r#"#!/usr/bin/env sh
+set -eu
+if [ "${SANDRONE_AGENT_PHASE:-}" != "implementation" ]; then
+  echo "unexpected phase: ${SANDRONE_AGENT_PHASE:-}" >&2
+  exit 1
+fi
+count_file=.sandrone/state/implementation-count
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+printf 'implementation round=%s started resume=%s\n' "$count" "${SANDRONE_AGENT_RESUME_SESSION_ID:-}" >> .sandrone/state/agent.log
+if [ "$count" -eq 1 ]; then
+  printf 'session id: 11111111-2222-3333-4444-555555555555\n'
+fi
+if [ "$count" -eq 2 ]; then
+  i=0
+  while [ ! -f .sandrone/state/release-second-implementation ] && [ "$i" -lt 600 ]; do
+    i=$((i + 1))
+    sleep 0.05
+  done
+fi
+printf 'round %s\n' "$count" > "$SANDRONE_WORKTREE/feature.txt"
+cat > "$SANDRONE_CHANGE_DOC" <<EOF
+---
+sandrone_schema: 1
+request_id: $SANDRONE_REQUEST_ID
+document_type: change-doc
+agent_phase: implementation
+agent_status: submitted
+agent_ready_for_review: true
+format_check_status: passed
+format_check_exit_code: 0
+updated_at: test
+---
+
+# 变更文档
+
+## 摘要
+
+第 $count 轮实现。
+
+## 实现前后对比
+
+已记录。
+
+## 关键设计点
+
+已记录。
+
+## 验证证据
+
+测试通过。
+
+## Review 结果
+
+等待汇总。
+EOF
+"#,
+    );
+
+    assert_success(&run(
+        &workspace,
+        &["tick", "--request_id", "REQ-0001", "--max-attempts", "20"],
+    ));
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/agent.log"),
+        "implementation round=1 started",
+    );
+    let change_path = workspace.join("obsidian/changes").join(&change_name);
+    let change_doc_path = request_artifact_path(&change_path, "REQ-0001", "change-doc.md");
+    wait_for_file_contains(
+        &change_path.join("reviews/code-review/details/001-design-reviewer.json"),
+        "needs another implementation round",
+    );
+    advance_until_not_review_running(&workspace, "REQ-0001");
+
+    assert_success(&run(
+        &workspace,
+        &["tick", "--request_id", "REQ-0001", "--max-attempts", "20"],
+    ));
+    wait_for_file_contains(
+        &workspace.join(".sandrone/state/agent.log"),
+        "implementation round=2 started",
+    );
+    let agent_log = fs::read_to_string(workspace.join(".sandrone/state/agent.log"))
+        .expect("agent log readable");
+    assert!(
+        agent_log
+            .contains("implementation round=2 started resume=11111111-2222-3333-4444-555555555555"),
+        "retry implementation should receive the previous Codex session id for resume:\n{agent_log}"
+    );
+    let reset_change_doc = fs::read_to_string(&change_doc_path).expect("change-doc readable");
+    assert!(
+        reset_change_doc.contains("agent_status: draft"),
+        "retry dispatch must clear the previous implementation submitted marker before the agent writes new output:\n{reset_change_doc}"
+    );
+    assert!(
+        reset_change_doc.contains("agent_ready_for_review: false"),
+        "retry dispatch must clear the previous implementation ready marker before the agent writes new output:\n{reset_change_doc}"
+    );
+
+    write_executable(
+        &workspace.join("tools/design-review.sh"),
+        "#!/usr/bin/env sh\nprintf '{\"reviewer\":\"DesignReviewer\",\"approved\":true,\"gate_unavailable\":false,\"decision\":\"approved\",\"recommended_next_phase\":\"implementation\",\"summary\":\"retry implementation is ready\",\"process\":[\"checked retry change doc\"],\"critical\":[],\"high\":[],\"warning\":[],\"info\":[]}'\n",
+    );
+    fs::write(
+        workspace.join(".sandrone/state/release-second-implementation"),
+        "release",
+    )
+    .expect("release marker should be writable");
+    advance_until_request_state_contains(&workspace, "REQ-0001", "wait-update-pr");
 }
 
 #[test]
@@ -3410,6 +3953,8 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
         .expect("old workspace should not have sessions file");
     fs::remove_file(workspace.join("tools/pr-create.sh"))
         .expect("old workspace should not have pr connector");
+    fs::remove_file(workspace.join("tools/pr-merge.sh"))
+        .expect("old workspace should not have pr merge connector");
     fs::remove_file(workspace.join("tools/plan-review.sh"))
         .expect("old workspace should not have plan review connector");
     fs::remove_file(workspace.join("tools/test-review.sh"))
@@ -3469,6 +4014,7 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
     let dry_run_stdout = String::from_utf8_lossy(&dry_run.stdout);
     assert!(dry_run_stdout.contains("Would create .sandrone/sessions.json"));
     assert!(dry_run_stdout.contains("Would refresh tools/issue-update.example.sh"));
+    assert!(dry_run_stdout.contains("Would refresh tools/pr-merge.example.sh"));
     assert!(dry_run_stdout.contains("Would refresh tools/plan-review.example.sh"));
     assert!(dry_run_stdout.contains("Would refresh tools/prompts/plan-reviewer.example.md"));
     assert!(
@@ -3484,8 +4030,9 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
 
     let config = fs::read_to_string(workspace.join(".sandrone/config.toml"))
         .expect("config should be readable");
-    assert!(config.contains("schema_version = 3"));
+    assert!(config.contains("schema_version = 4"));
     assert!(config.contains("parallel_limit = 1"));
+    assert!(config.contains("auto_merge = false"));
     assert!(workspace.join(".sandrone/sessions.json").is_file());
     assert!(
         !workspace
@@ -3518,6 +4065,8 @@ fn upgrade_refreshes_examples_without_overwriting_user_connectors() {
     assert!(issue_tool_example.contains("gh api --method GET"));
     assert!(!workspace.join("tools/pr-create.sh").exists());
     assert!(workspace.join("tools/pr-create.example.sh").is_file());
+    assert!(!workspace.join("tools/pr-merge.sh").exists());
+    assert!(workspace.join("tools/pr-merge.example.sh").is_file());
     assert!(!workspace.join("tools/plan-review.sh").exists());
     assert!(workspace.join("tools/plan-review.example.sh").is_file());
     assert!(!workspace.join("tools/test-review.sh").exists());

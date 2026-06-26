@@ -72,7 +72,7 @@ obsidian/changes/<YYYY-MM-DD-request-name>/
 
 | 路径 | 说明 |
 | --- | --- |
-| `.sandrone/config.toml` | workspace 配置，例如 `parallel_limit`。 |
+| `.sandrone/config.toml` | workspace 配置，例如 `parallel_limit` 和 `auto_merge`。 |
 | `.sandrone/state/requests.tsv` | request 中央索引。 |
 | `.sandrone/state/events.ndjson` | 审计事件流。 |
 | `.sandrone/state/jobs/` | agent/reviewer 的统一运行时目录，包含 `pid`、`exit`、`stdout.log`、`stderr.log`、`hook.log`、`events.log` 和 `runtime.json`。阶段完成状态写在对应 Markdown 文档的 Sandrone frontmatter。 |

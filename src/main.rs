@@ -15,7 +15,9 @@ mod utils;
 
 pub(crate) use codegraph::*;
 pub(crate) use defaults::*;
-pub(crate) use delivery::deliver_finished_request;
+pub(crate) use delivery::{
+    deliver_finished_request, pr_merge_request, run_pr_merge_scheduler_from_tick,
+};
 pub(crate) use doc_status::*;
 pub(crate) use doctor::doctor;
 pub(crate) use jobs::*;
@@ -47,7 +49,7 @@ const SESSIONS_PATH: &str = ".sandrone/sessions.json";
 const LOCAL_STATE_DIR: &str = ".sandrone";
 const LEGACY_LOCAL_STATE_DIR: &str = ".codex-auto-dev";
 const GLOBAL_WORKSPACES_FILE: &str = "workspaces.json";
-const FRAMEWORK_SCHEMA_VERSION: u32 = 3;
+const FRAMEWORK_SCHEMA_VERSION: u32 = 4;
 const DEV_REPO: &str = "dev/repo";
 const WORKTREES: &str = "dev/worktrees";
 const ISSUE_TOOL: &str = "tools/issue-update.sh";
@@ -55,6 +57,7 @@ const ISSUE_AGENT_TOOL: &str = "tools/issue-agent.sh";
 const REBASE_AGENT_TOOL: &str = "tools/rebase-agent.sh";
 const PR_TOOL: &str = "tools/pr-create.sh";
 const PR_STATUS_TOOL: &str = "tools/pr-status.sh";
+const PR_MERGE_TOOL: &str = "tools/pr-merge.sh";
 const CHECK_FORMAT_TOOL: &str = "tools/check-format.sh";
 const PLAN_REVIEW_TOOL: &str = "tools/plan-review.sh";
 const DECOMPOSITION_REVIEW_TOOL: &str = "tools/decomposition-review.sh";
@@ -77,6 +80,7 @@ const ISSUE_AGENT_TOOL_EXAMPLE: &str = "tools/issue-agent.example.sh";
 const REBASE_AGENT_TOOL_EXAMPLE: &str = "tools/rebase-agent.example.sh";
 const PR_TOOL_EXAMPLE: &str = "tools/pr-create.example.sh";
 const PR_STATUS_TOOL_EXAMPLE: &str = "tools/pr-status.example.sh";
+const PR_MERGE_TOOL_EXAMPLE: &str = "tools/pr-merge.example.sh";
 const CHECK_FORMAT_TOOL_EXAMPLE: &str = "tools/check-format.example.sh";
 const PLAN_REVIEW_TOOL_EXAMPLE: &str = "tools/plan-review.example.sh";
 const DECOMPOSITION_REVIEW_TOOL_EXAMPLE: &str = "tools/decomposition-review.example.sh";
@@ -115,6 +119,7 @@ struct Config {
     git_url: String,
     base_branch: String,
     parallel_limit: usize,
+    auto_merge: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -178,7 +183,7 @@ struct IntegrationRecord<'a> {
 }
 
 #[derive(Clone, Debug)]
-struct PrStatusReport {
+pub(crate) struct PrStatusReport {
     status: String,
     url: String,
     detail: String,
@@ -292,6 +297,15 @@ impl AgentPhase {
         }
     }
 
+    fn review_rejected_status(self) -> &'static str {
+        match self {
+            AgentPhase::Decomposition => "decomposition-review-rejected",
+            AgentPhase::Planning => "plan-review-rejected",
+            AgentPhase::Implementation => "code-review-rejected",
+            AgentPhase::Rebase => "integration-review-rejected",
+        }
+    }
+
     fn prompt_path(self) -> &'static str {
         match self {
             AgentPhase::Decomposition => DECOMPOSITION_AGENT_PROMPT,
@@ -345,6 +359,7 @@ fn run() -> Result<()> {
         "start" => start_worktree(&args),
         "finish" => finish_request(&args),
         "pr-status" => pr_status_request(&args),
+        "pr-merge" => pr_merge_request(&args),
         "pr-refresh" => pr_refresh_request(&args),
         "block" => block_request(&args),
         "resume" => resume_request(&args),
@@ -419,6 +434,7 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
+    write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
     write_default_env_files()?;
@@ -491,6 +507,7 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     write_default_issue_agent_tool()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
+    write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
     write_default_env_files()?;
@@ -623,6 +640,8 @@ fn tick(args: &[String]) -> Result<()> {
             "--max-attempts",
             "--parallel-limit",
             "--parallel_limit",
+            "--auto-merge",
+            "--no-auto-merge",
         ],
     )?;
     let request_id = flag_value(args, "--request_id")?.or(flag_value(args, "--request-id")?);
@@ -632,6 +651,7 @@ fn tick(args: &[String]) -> Result<()> {
         config.parallel_limit,
     )?;
     let max_attempts = parse_max_attempts(flag_value(args, "--max-attempts")?)?;
+    let auto_merge_enabled = resolve_tick_auto_merge(args, config.auto_merge)?;
 
     update_requests()?;
 
@@ -643,14 +663,21 @@ fn tick(args: &[String]) -> Result<()> {
     let requests = load_requests()?;
     let request_ids = select_tick_requests(&requests, request_id.as_deref())?;
     if request_ids.is_empty() {
-        println!("Tick complete: no pending request.");
+        if !run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)? {
+            println!("Tick complete: no pending request.");
+        }
         return Ok(());
     }
     let running_count = running_issue_agent_count(&requests);
     if running_count >= parallel_limit {
+        let merge_checked =
+            run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)?;
         println!(
             "Tick parallel limit reached: {running_count}/{parallel_limit} issue-agent(s) already running."
         );
+        if merge_checked {
+            println!("Tick merge scheduler ran despite issue-agent parallel limit.");
+        }
         return Ok(());
     }
     let available_slots = parallel_limit - running_count;
@@ -692,7 +719,10 @@ fn tick(args: &[String]) -> Result<()> {
         }
     }
 
-    if dispatched.is_empty() && failures.is_empty() {
+    let merge_checked =
+        run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)?;
+
+    if dispatched.is_empty() && failures.is_empty() && !merge_checked {
         println!("Tick complete: no pending request.");
         return Ok(());
     }
@@ -1615,7 +1645,8 @@ fn start_pr_refresh(request_id: &str, max_attempts: Option<u32>) -> Result<()> {
             &detail,
         )?;
         upsert_session_for_request(&request, "rebase", AgentPhase::Rebase.running_status())?;
-        let pid = spawn_issue_agent(&request, resolved_max_attempts, AgentPhase::Rebase)?;
+        reset_phase_document_for_agent_dispatch(&request, AgentPhase::Rebase)?;
+        let pid = spawn_issue_agent(&request, resolved_max_attempts, AgentPhase::Rebase, None)?;
         append_event(
             "rebase_agent_dispatched",
             &request.request_id,
@@ -2902,6 +2933,8 @@ fn dispatch_next_agent_for_request(
         return Err(format!("{} has no worktree for rebase agent", request.request_id).into());
     }
 
+    let resume_session_id = reusable_agent_session_id(&request, phase);
+    reset_phase_document_for_agent_dispatch(&request, phase)?;
     let phase_name = phase.as_str();
     request.status = phase.running_status().to_string();
     request.updated_at = now_string();
@@ -2910,7 +2943,7 @@ fn dispatch_next_agent_for_request(
     write_status_json(&request, phase_name, phase.running_status(), "")?;
     upsert_session_for_request(&request, phase_name, phase.running_status())?;
 
-    match spawn_issue_agent(&request, resolved_max_attempts, phase) {
+    match spawn_issue_agent(&request, resolved_max_attempts, phase, resume_session_id) {
         Ok(pid) => {
             append_event(
                 "agent_dispatched",
@@ -3072,6 +3105,7 @@ fn refresh_agent_phase(request: &Request, phase: AgentPhase) -> Result<bool> {
     let Some(exit_code) = read_agent_exit_code(&request.request_id)? else {
         return refresh_missing_agent_exit(request, phase.as_str());
     };
+    record_agent_session_id(&request.request_id, phase)?;
     if exit_code != "0" {
         if let Some(artifact) = agent_document_status_is_submitted(request, phase)? {
             append_event(
@@ -3333,6 +3367,32 @@ fn parse_parallel_limit(value: Option<String>, default_limit: usize) -> Result<u
     Ok(parsed)
 }
 
+fn resolve_tick_auto_merge(args: &[String], config_default: bool) -> Result<bool> {
+    let enabled_by_flag = flag_present(args, "--auto-merge");
+    let disabled_by_flag = flag_present(args, "--no-auto-merge");
+    if enabled_by_flag && disabled_by_flag {
+        return Err("--auto-merge and --no-auto-merge cannot be used together".into());
+    }
+    if enabled_by_flag {
+        return Ok(true);
+    }
+    if disabled_by_flag {
+        return Ok(false);
+    }
+    match env::var("SANDRONE_AUTO_MERGE") {
+        Ok(value) if !value.trim().is_empty() => parse_bool_value(&value, "SANDRONE_AUTO_MERGE"),
+        _ => Ok(config_default),
+    }
+}
+
+fn parse_bool_value(value: &str, name: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("{name} must be one of true/false, 1/0, yes/no, or on/off").into()),
+    }
+}
+
 fn phase_default_max_attempts(phase: AgentPhase) -> u32 {
     match phase {
         AgentPhase::Decomposition => DEFAULT_DECOMPOSITION_MAX_ATTEMPTS,
@@ -3492,20 +3552,27 @@ fn fetch_if_remote_exists() -> Result<()> {
     )
 }
 
-fn spawn_issue_agent(request: &Request, max_attempts: u32, phase: AgentPhase) -> Result<u32> {
+fn spawn_issue_agent(
+    request: &Request,
+    max_attempts: u32,
+    phase: AgentPhase,
+    resume_session_id: Option<String>,
+) -> Result<u32> {
     let tool_path = phase.tool_path();
     if !Path::new(tool_path).exists() {
         return Err(format!("{tool_path} does not exist").into());
     }
+    let session_path = agent_session_path(&request.request_id, phase);
     fs::create_dir_all(agent_job_state_dir(&request.request_id))?;
-    let stdout = create_truncated_runtime_file(
-        agent_stdout_path(&request.request_id),
-        Some(&legacy_agent_stdout_path(&request.request_id)),
-    )?;
-    let stderr = create_truncated_runtime_file(
-        agent_stderr_path(&request.request_id),
-        Some(&legacy_agent_stderr_path(&request.request_id)),
-    )?;
+    if resume_session_id.is_none() {
+        remove_runtime_file(&session_path, None)?;
+    }
+    let stdout_path = agent_stdout_path(&request.request_id);
+    let legacy_stdout_path = legacy_agent_stdout_path(&request.request_id);
+    let stderr_path = agent_stderr_path(&request.request_id);
+    let legacy_stderr_path = legacy_agent_stderr_path(&request.request_id);
+    let stdout = create_truncated_runtime_file(&stdout_path, Some(&legacy_stdout_path))?;
+    let stderr = create_truncated_runtime_file(&stderr_path, Some(&legacy_stderr_path))?;
     let exit_path = agent_exit_path(&request.request_id);
     let legacy_exit_path = legacy_agent_exit_path(&request.request_id);
     let hook_log_path = agent_hook_log_path(&request.request_id);
@@ -3524,6 +3591,9 @@ exit_path=$2
 legacy_exit_path=$3
 hook_log=$4
 runtime_log=$5
+session_path=$6
+stdout_log=$7
+stderr_log=$8
 
 resolve_sandrone_bin() {
   if [ -n "${SANDRONE_BIN:-}" ]; then
@@ -3565,10 +3635,28 @@ run_hook() {
   fi
 }
 
+record_session_id() {
+  [ -n "$session_path" ] || return 0
+  session_id=""
+  for log_path in "$stdout_log" "$stderr_log"; do
+    [ -f "$log_path" ] || continue
+    candidate=$(sed -nE 's/.*"session_id"[[:space:]]*:[[:space:]]*"([0-9A-Fa-f-]{16,})".*/\1/p; s/.*"sessionId"[[:space:]]*:[[:space:]]*"([0-9A-Fa-f-]{16,})".*/\1/p; s/.*session id:[[:space:]]*"?([0-9A-Fa-f-]{16,})"?.*/\1/p' "$log_path" 2>/dev/null | tail -n 1)
+    case "$candidate" in
+      *-*) session_id=$candidate ;;
+    esac
+    [ -n "$session_id" ] && break
+  done
+  [ -n "$session_id" ] || return 0
+  mkdir -p "$(dirname "$session_path")" 2>/dev/null || return 0
+  printf '%s\n' "$session_id" > "$session_path" 2>/dev/null || return 0
+  write_runtime_event agent-session-recorded "session_id=$session_id"
+}
+
 write_exit() {
   code=$1
   printf '%s\n' "$code" > "$exit_path"
   [ -n "$legacy_exit_path" ] && printf '%s\n' "$code" > "$legacy_exit_path"
+  record_session_id
   write_runtime_event wrapper-exited "exit=$code"
   run_hook "$code"
   exit "$code"
@@ -3594,12 +3682,18 @@ write_exit "$code"
         .arg(&legacy_exit_path)
         .arg(&hook_log_path)
         .arg(&events_log_path)
+        .arg(&session_path)
+        .arg(&stdout_path)
+        .arg(&stderr_path)
         .current_dir(".")
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     command.process_group(0);
     apply_issue_agent_env(&mut command, request, max_attempts, phase)?;
+    if let Some(resume_session_id) = resume_session_id {
+        command.env("SANDRONE_AGENT_RESUME_SESSION_ID", resume_session_id);
+    }
     write_job_runtime(
         agent_runtime_path(&request.request_id),
         &JobRuntime {
@@ -3639,6 +3733,91 @@ write_exit "$code"
         },
     )?;
     Ok(child.id())
+}
+
+fn reusable_agent_session_id(request: &Request, phase: AgentPhase) -> Option<String> {
+    if request.status != phase.review_rejected_status() {
+        return None;
+    }
+    if let Ok(content) = fs::read_to_string(agent_session_path(&request.request_id, phase)) {
+        let session_id = content.trim();
+        if looks_like_codex_session_id(session_id) {
+            return Some(session_id.to_string());
+        }
+    }
+    agent_log_session_id(&request.request_id)
+}
+
+fn record_agent_session_id(request_id: &str, phase: AgentPhase) -> Result<()> {
+    let Some(session_id) = agent_log_session_id(request_id) else {
+        return Ok(());
+    };
+    let path = agent_session_path(request_id, phase);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, format!("{session_id}\n"))?;
+    append_event(
+        "agent_session_recorded",
+        request_id,
+        phase.as_str(),
+        "recorded",
+        &format!("session_id={session_id}"),
+    )?;
+    Ok(())
+}
+
+fn agent_log_session_id(request_id: &str) -> Option<String> {
+    for path in [
+        agent_stdout_path(request_id),
+        agent_stderr_path(request_id),
+        legacy_agent_stdout_path(request_id),
+        legacy_agent_stderr_path(request_id),
+    ] {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        if let Some(session_id) = extract_codex_session_id(&content) {
+            return Some(session_id);
+        }
+    }
+    None
+}
+
+fn agent_session_path(request_id: &str, phase: AgentPhase) -> PathBuf {
+    legacy_agent_state_dir().join(format!("{}.{}.session", request_id, phase.as_str()))
+}
+
+fn extract_codex_session_id(content: &str) -> Option<String> {
+    for line in content.lines().rev() {
+        if let Some(session_id) = json_value(line, "session_id")
+            .or_else(|| json_value(line, "sessionId"))
+            .filter(|value| looks_like_codex_session_id(value))
+        {
+            return Some(session_id);
+        }
+        if let Some((_, raw)) = line.split_once("session id:") {
+            let session_id = raw
+                .trim()
+                .split(|character: char| character.is_whitespace() || character == ',')
+                .next()
+                .unwrap_or_default()
+                .trim_matches(|character| character == '"' || character == '\'')
+                .to_string();
+            if looks_like_codex_session_id(&session_id) {
+                return Some(session_id);
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_codex_session_id(value: &str) -> bool {
+    value.len() >= 16
+        && value
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() || character == '-')
+        && value.contains('-')
 }
 
 fn apply_issue_agent_env(
@@ -4211,7 +4390,7 @@ fn usage(command: &str) -> Result<()> {
 
 fn print_help() {
     println!(
-        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  doc-status --request_id <REQ-0001> [--phase <decomposition|planning|implementation|rebase>]\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
+        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1] [--auto-merge]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  doc-status --request_id <REQ-0001> [--phase <decomposition|planning|implementation|rebase>]\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-merge --request_id <REQ-0001> [--queue-decision ready_for_merge] [--auto-merge]\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
     );
 }
 

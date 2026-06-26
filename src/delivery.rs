@@ -66,6 +66,375 @@ pub(crate) fn deliver_finished_request(
     })
 }
 
+pub(crate) fn pr_merge_request(args: &[String]) -> Result<()> {
+    ensure_initialized()?;
+    ensure_allowed_flags(
+        args,
+        &[
+            "--request_id",
+            "--request-id",
+            "--queue-decision",
+            "--auto-merge",
+        ],
+    )?;
+    let request_id = required_request_id(args)?;
+    let queue_decision =
+        flag_value(args, "--queue-decision")?.unwrap_or_else(|| "ready_for_merge".to_string());
+    let auto_merge_enabled = flag_present(args, "--auto-merge");
+    let outcome = run_pr_merge_gate(&request_id, &queue_decision, auto_merge_enabled)?;
+    print_pr_merge_outcome(&outcome);
+    Ok(())
+}
+
+pub(crate) fn run_pr_merge_scheduler_from_tick(
+    request_filter: Option<&str>,
+    auto_merge_enabled: bool,
+) -> Result<bool> {
+    if !auto_merge_enabled {
+        return Ok(false);
+    }
+    let requests = load_requests()?;
+    let Some(request_id) = requests
+        .iter()
+        .filter(|request| {
+            request_filter
+                .map(|filter| request.request_id == filter)
+                .unwrap_or(true)
+        })
+        .find(|request| canonical_status(&request.status) == STATUS_WAIT_FINISH)
+        .map(|request| request.request_id.clone())
+    else {
+        return Ok(false);
+    };
+    let Some(_lock) = RequestLock::acquire(&request_id)? else {
+        println!("Tick merge scheduler skipped for {request_id}: request lock is already held.");
+        return Ok(false);
+    };
+    let outcome = run_pr_merge_gate(&request_id, "ready_for_merge", true)?;
+    println!(
+        "Tick merge scheduler checked {}: {}",
+        outcome.request_id, outcome.action
+    );
+    println!("  reason: {}", outcome.reason);
+    println!("  pr-status: {}", outcome.pr_status_raw);
+    if let Some(merge_raw) = &outcome.merge_raw {
+        println!("  pr-merge: {merge_raw}");
+    }
+    println!("  decision: {}", outcome.decision_path);
+    println!("  request status: {}", outcome.request_status);
+    Ok(true)
+}
+
+struct PrMergeOutcome {
+    request_id: String,
+    action: String,
+    reason: String,
+    pr_status_raw: String,
+    merge_raw: Option<String>,
+    decision_path: String,
+    request_status: String,
+}
+
+fn run_pr_merge_gate(
+    request_id: &str,
+    queue_decision: &str,
+    auto_merge_enabled: bool,
+) -> Result<PrMergeOutcome> {
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    ensure_refreshable_request(&request)?;
+    ensure_gate_approved(&request, "change-doc")?;
+
+    let config = load_config()?;
+    let pr_status = run_pr_status_tool(&request, &config)?;
+    let decision_id = scheduler_merge_decision_id(&request.request_id);
+    let mut merge_report = None;
+    let (action, reason) = if pr_status.status == "merged" {
+        mark_request_finished_after_merge(
+            &mut requests,
+            index,
+            &mut request,
+            &format!(
+                "PR already merged; confirmed by {PR_STATUS_TOOL}: {}",
+                pr_status.raw
+            ),
+        )?;
+        ("finished".to_string(), "PR already merged".to_string())
+    } else if !auto_merge_enabled {
+        (
+            "skipped".to_string(),
+            "auto merge disabled; pass --auto-merge to allow connector execution".to_string(),
+        )
+    } else if queue_decision != "ready_for_merge" {
+        (
+            "skipped".to_string(),
+            format!("queue decision is {queue_decision}; expected ready_for_merge"),
+        )
+    } else if pr_status.status != "safe" {
+        (
+            "skipped".to_string(),
+            format!(
+                "pr-status returned {}; expected safe before merge",
+                pr_status.status
+            ),
+        )
+    } else {
+        let report = run_pr_merge_tool(
+            &request,
+            &config,
+            &pr_status,
+            queue_decision,
+            auto_merge_enabled,
+            &decision_id,
+        )?;
+        let action_reason = if report.status == "merged" {
+            mark_request_finished_after_merge(
+                &mut requests,
+                index,
+                &mut request,
+                &format!("PR merge confirmed by {PR_MERGE_TOOL}: {}", report.raw),
+            )?;
+            (
+                "merged".to_string(),
+                format!("pr-merge returned {}", report.status),
+            )
+        } else {
+            (
+                report.status.clone(),
+                format!("pr-merge returned {}: {}", report.status, report.detail),
+            )
+        };
+        merge_report = Some(report);
+        action_reason
+    };
+    let decision_path = write_merge_decision_record(MergeDecisionRecord {
+        request: &request,
+        decision_id: &decision_id,
+        queue_decision,
+        auto_merge_enabled,
+        pr_status: &pr_status,
+        action: &action,
+        reason: &reason,
+        merge_report: merge_report.as_ref(),
+    })?;
+    append_event(
+        "pr_merge_checked",
+        &request.request_id,
+        "delivery",
+        &request.status,
+        &format!("decision={decision_path}; action={action}; reason={reason}"),
+    )?;
+
+    Ok(PrMergeOutcome {
+        request_id: request.request_id,
+        action,
+        reason,
+        pr_status_raw: pr_status.raw,
+        merge_raw: merge_report.map(|report| report.raw),
+        decision_path,
+        request_status: request.status,
+    })
+}
+
+fn print_pr_merge_outcome(outcome: &PrMergeOutcome) {
+    println!(
+        "PR merge check for {}: {}",
+        outcome.request_id, outcome.action
+    );
+    println!("  reason: {}", outcome.reason);
+    println!("  pr-status: {}", outcome.pr_status_raw);
+    if let Some(merge_raw) = &outcome.merge_raw {
+        println!("  pr-merge: {merge_raw}");
+    }
+    println!("  decision: {}", outcome.decision_path);
+    println!("  request status: {}", outcome.request_status);
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PrMergeReport {
+    pub(crate) status: String,
+    pub(crate) url: String,
+    pub(crate) detail: String,
+    pub(crate) raw: String,
+}
+
+fn scheduler_merge_decision_id(request_id: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-merge-{nanos}", request_id.to_ascii_lowercase())
+}
+
+fn mark_request_finished_after_merge(
+    requests: &mut [Request],
+    index: usize,
+    request: &mut Request,
+    reason: &str,
+) -> Result<()> {
+    request.status = STATUS_FINISHED.to_string();
+    request.updated_at = now_string();
+    requests[index] = request.clone();
+    save_requests(requests)?;
+    write_status_json(request, "delivery", STATUS_FINISHED, reason)?;
+    append_event(
+        "pr_merge_finished",
+        &request.request_id,
+        "delivery",
+        STATUS_FINISHED,
+        reason,
+    )?;
+    upsert_session_for_request(request, "implementation", STATUS_FINISHED)?;
+    Ok(())
+}
+
+pub(crate) fn run_pr_merge_tool(
+    request: &Request,
+    config: &Config,
+    pr_status: &PrStatusReport,
+    queue_decision: &str,
+    auto_merge_enabled: bool,
+    decision_id: &str,
+) -> Result<PrMergeReport> {
+    if !Path::new(PR_MERGE_TOOL).exists() {
+        let raw = format!("blocked\t{}\t{PR_MERGE_TOOL} missing", pr_status.url);
+        return Ok(parse_pr_merge_report(&raw));
+    }
+    let compare_url = github_compare_url(&config.git_url, &config.base_branch, &request.branch)
+        .unwrap_or_default();
+    let output = Command::new("sh")
+        .arg(PR_MERGE_TOOL)
+        .current_dir(".")
+        .env("SANDRONE_REQUEST_ID", &request.request_id)
+        .env("SANDRONE_REQUEST_EXTERNAL_ID", &request.external_id)
+        .env("SANDRONE_REQUEST_SOURCE", &request.source)
+        .env("SANDRONE_REQUEST_TITLE", &request.title)
+        .env("SANDRONE_REQUEST_URL", &request.url)
+        .env("SANDRONE_CHANGE_PATH", &request.change_path)
+        .env("SANDRONE_WORKTREE", &request.worktree_path)
+        .env("SANDRONE_PR_BASE", &config.base_branch)
+        .env("SANDRONE_PR_HEAD", &request.branch)
+        .env("SANDRONE_PR_COMPARE_URL", compare_url)
+        .env("SANDRONE_PR_STATUS", &pr_status.status)
+        .env("SANDRONE_PR_STATUS_URL", &pr_status.url)
+        .env("SANDRONE_PR_STATUS_DETAIL", &pr_status.detail)
+        .env("SANDRONE_PR_STATUS_RAW", &pr_status.raw)
+        .env("SANDRONE_QUEUE_DECISION", queue_decision)
+        .env(
+            "SANDRONE_AUTO_MERGE_ENABLED",
+            if auto_merge_enabled { "true" } else { "false" },
+        )
+        .env("SANDRONE_SCHEDULER_DECISION_ID", decision_id)
+        .envs(proxy_env())
+        .output();
+    let raw = match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8(output.stdout)?;
+            stdout
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("blocked\t\tpr-merge returned no output")
+                .to_string()
+        }
+        Ok(output) => format!(
+            "failed\t{}\t{}",
+            pr_status.url,
+            review_diagnostic_excerpt(&String::from_utf8_lossy(&output.stderr))
+        ),
+        Err(error) => format!("failed\t{}\t{error}", pr_status.url),
+    };
+    let merge_path = Path::new(".sandrone")
+        .join("state")
+        .join(format!("{}-pr-merge.tsv", request.request_id));
+    fs::write(merge_path, ensure_trailing_newline(&raw))?;
+    Ok(parse_pr_merge_report(&raw))
+}
+
+struct MergeDecisionRecord<'a> {
+    request: &'a Request,
+    decision_id: &'a str,
+    queue_decision: &'a str,
+    auto_merge_enabled: bool,
+    pr_status: &'a PrStatusReport,
+    action: &'a str,
+    reason: &'a str,
+    merge_report: Option<&'a PrMergeReport>,
+}
+
+fn write_merge_decision_record(record: MergeDecisionRecord<'_>) -> Result<String> {
+    let decisions_dir = Path::new(".sandrone")
+        .join("state")
+        .join("scheduler")
+        .join("decisions");
+    fs::create_dir_all(&decisions_dir)?;
+    let path = decisions_dir.join(format!("{}.json", record.decision_id));
+    let merge_status = record
+        .merge_report
+        .map(|report| report.status.as_str())
+        .unwrap_or("not-run");
+    let merge_url = record
+        .merge_report
+        .map(|report| report.url.as_str())
+        .unwrap_or("");
+    let merge_detail = record
+        .merge_report
+        .map(|report| report.detail.as_str())
+        .unwrap_or("");
+    let merge_raw = record
+        .merge_report
+        .map(|report| report.raw.as_str())
+        .unwrap_or("");
+    fs::write(
+        &path,
+        format!(
+            "{{\n  \"schema_version\": 1,\n  \"decision_id\": \"{}\",\n  \"request_id\": \"{}\",\n  \"queue_decision\": \"{}\",\n  \"auto_merge_enabled\": {},\n  \"pr_status\": \"{}\",\n  \"pr_status_url\": \"{}\",\n  \"pr_status_detail\": \"{}\",\n  \"pr_status_raw\": \"{}\",\n  \"action\": \"{}\",\n  \"reason\": \"{}\",\n  \"merge_status\": \"{}\",\n  \"merge_url\": \"{}\",\n  \"merge_detail\": \"{}\",\n  \"merge_raw\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
+            json_escape(record.decision_id),
+            json_escape(&record.request.request_id),
+            json_escape(record.queue_decision),
+            if record.auto_merge_enabled {
+                "true"
+            } else {
+                "false"
+            },
+            json_escape(&record.pr_status.status),
+            json_escape(&record.pr_status.url),
+            json_escape(&record.pr_status.detail),
+            json_escape(&record.pr_status.raw),
+            json_escape(record.action),
+            json_escape(record.reason),
+            json_escape(merge_status),
+            json_escape(merge_url),
+            json_escape(merge_detail),
+            json_escape(merge_raw),
+            json_escape(&now_string()),
+        ),
+    )?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn parse_pr_merge_report(line: &str) -> PrMergeReport {
+    let fields: Vec<&str> = line.split('\t').collect();
+    PrMergeReport {
+        status: fields
+            .first()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "blocked".to_string()),
+        url: fields
+            .get(1)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        detail: fields
+            .get(2)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        raw: line.trim().to_string(),
+    }
+}
+
 fn write_pr_body(request: &Request) -> Result<String> {
     let body_path = Path::new(".sandrone")
         .join("state")

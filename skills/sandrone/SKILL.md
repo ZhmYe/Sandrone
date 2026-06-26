@@ -80,6 +80,7 @@ sdr resume --request_id REQ-0001
 sdr advance --request_id REQ-0001
 sdr finish --request_id REQ-0001 --message "feat: concise summary"
 sdr pr-status --request_id REQ-0001
+sdr pr-merge --request_id REQ-0001 --auto-merge
 sdr pr-refresh --request_id REQ-0001
 sdr upgrade --dry-run
 sdr upgrade
@@ -109,13 +110,15 @@ update
 -> pr-status(merged => finished)
 ```
 
+可选自动合并只允许走 `sdr pr-merge --auto-merge`：change-doc gate 必须已通过，队列决策必须是 `ready_for_merge`，`tools/pr-status.sh` 必须返回 `safe`。`open`、`unsafe`、`unsupported` 都不能触发 merge。
+
 PR 过期或冲突走支线:
 
 ```text
 wait-finish -> pr-refresh -> RebaseAgent/IntegrationReviewer -> wait-update-pr
 ```
 
-默认 `.sandrone/config.toml` 中 `parallel_limit = 1`。需要并发时用 `sdr tick --parallel-limit 2` 或改配置。
+默认 `.sandrone/config.toml` 中 `parallel_limit = 1`、`auto_merge = false`。需要并发时用 `sdr tick --parallel-limit 2` 或改配置。需要 tick 自动合并时，必须显式设置 `auto_merge = true`、`SANDRONE_AUTO_MERGE=1` 或单次传 `sdr tick --auto-merge`；每轮最多处理一个 `wait-finish` PR。
 
 ## 关键边界
 
@@ -124,6 +127,7 @@ wait-finish -> pr-refresh -> RebaseAgent/IntegrationReviewer -> wait-update-pr
 - Reviewer 输出必须是结构化 JSON。`SANDRONE_REVIEW_CONTEXT` 是轻量隔离上下文目录；reviewer 必须先读其中的 `artifact-index.md`，再按索引里的原始路径和自动摘要按需读取。TestReviewer 与 DesignReviewer 不得读取其他 reviewer 输出、历史 summary/detail 或 agent journal。对 slice 来说没有独立 `request.md`，plan 就是 slice 的权威 request+plan。
 - 默认 `codex-cli` 和 `codex-api` connector 会尽量使用 `SANDRONE_CODEX_MODEL_CATALOG_JSON`、`$CODEX_HOME/models_cache.json` 或 `$HOME/.codex/models_cache.json`，避免 agent/reviewer 在模型列表刷新阶段因为网络超时或 provider `/models` 格式不兼容而失败。若 backend、模型或结构化输出不可用，必须 block，不能绕过 reviewer gate。
 - 子 agent 只有在当前 phase 产物、journal、自检和必要验证全部完成后，才能把 `$SANDRONE_AGENT_STATUS_DOC` 的 frontmatter 标记为 `agent_status: submitted`、`agent_ready_for_review: true`。这个状态头只是“可提交外层 review gate”的完成信号，不是 approval，不能替代 reviewer；非零退出且没有有效文档提交状态时必须 block。
+- Review 打回后的同 phase retry 可能复用上一轮 Codex session。复用只用于节省上下文和延续判断；本轮 prompt、最新 reviewer finding、当前文件和状态始终优先，仍必须重新通过外层 reviewer gate。
 - implementation agent 只能改 `SANDRONE_WORKTREE`，不直接改 `dev/repo`。
 - implementation agent 必须运行格式/编译/测试门禁，更新目标项目文档和 change-doc。交付文档中的 checklist 必须全部打勾；无法由当前流程完成的事项不得保留为未勾选 checklist，应移到后续流程/人工事项/阻塞项。
 - 如果测试暴露不是由本分支改动导致的已有失败，implementation agent 也要在当前 worktree 中修复并记录 Baseline failure，除非修复不安全。

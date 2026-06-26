@@ -36,6 +36,15 @@ updated_at: 2026-06-06T12:00:00Z
 
 Codex CLI 可能因为本轮早期工具命令失败而最终返回非零，即使后续已经修复并完成产物。文档状态头用来让外层区分“产物已准备好但 CLI 退出码非零”和“agent 真的失败”。不要提前标记 submitted；不要在标记后继续做可能失败或改变产物的操作。写完状态头后只允许给出最终说明并退出。
 
+## Review 打回复用上下文
+
+如果上一轮同一 phase 被 reviewer 打回，Sandrone 可能通过 Codex CLI 的 resume 能力复用上一轮 agent 会话，并在启动上下文中提供 `Resume session id`。复用上下文只是为了减少重复读取和保留已经形成的判断，不改变任何门禁边界:
+
+- 本轮启动 prompt、环境变量、`status.json`、阶段文档 frontmatter、最新 reviewer summary/detail 永远比旧聊天上下文优先。
+- 必须重新确认当前 request id、phase、worktree、change path、latest review attempt 和最新文件内容；不要凭旧上下文直接继续写。
+- 只处理最新 reviewer 中仍然有效的问题。历史 finding 可以作为线索，但不能覆盖最新 review。
+- 如果发现旧上下文与当前文件或状态冲突，以当前文件和状态为准，并在 journal 里记录冲突与取舍。
+
 ## 上下文预算与读取顺序
 
 agent 必须严谨，但不能把整个历史和所有 skill 都塞进上下文。先读启动 prompt 顶部的路径清单，然后按当前 phase 选择最小充分上下文。

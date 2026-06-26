@@ -99,7 +99,9 @@ flowchart TD
     J -- "通过" --> K["父 Request<br/>wait-update-pr"]
     K --> L["sdr finish<br/>commit / push / create PR"]
     L --> M["wait-finish"]
-    M --> N["sdr pr-status<br/>确认合并"]
+    M --> N["sdr pr-status<br/>确认已合并"]
+    M -. "可选自动合并" .-> AM["sdr pr-merge<br/>safe + ready + auto"]
+    AM --> O["finished"]
     N --> O["finished"]
     M -. "PR 冲突或需要刷新" .-> P["sdr pr-refresh"]
     P --> Q{"IntegrationReviewer"}
@@ -113,7 +115,7 @@ flowchart TD
 - 每个 slice 都走 `plan -> plan-review -> implementation -> code-review`。
 - reviewer 有 blocking finding 时必须退回修复；gate 不可用时必须 block。
 - reviewer gate 和 agent 一样异步运行：命令先派发后台 worker 并返回，worker 结束后由 hook、`sdr advance` 或下一次 `sdr tick` 收敛状态。
-- 自动流程停在 `wait-update-pr` 或 `wait-finish`，不会擅自 merge。
+- 自动流程默认停在 `wait-update-pr` 或 `wait-finish`；只有 `tick --auto-merge`、`.sandrone/config.toml` 或 `SANDRONE_AUTO_MERGE=1` 显式开启，且 `pr-status=safe` 时才会调用合并脚本。
 - 所有文档、review detail、agent 日志、状态和 PR 记录都写入 workspace，便于恢复和审计。
 
 完整状态机、slice 调度、review 轮次、PR refresh 见 [docs/workflow.md](docs/workflow.md)。
@@ -136,6 +138,7 @@ flowchart TD
 | `sdr finish --request_id REQ-0001 --message "feat: ..."` | 在 gate 通过后 commit、push 分支并创建/复用 PR。 |
 | `sdr pr-refresh --request_id REQ-0001` | PR 冲突或落后 base 时执行 rebase/集成刷新。 |
 | `sdr pr-status --request_id REQ-0001` | 检查 PR 是否已合并，只有确认 merged 才标记 finished。 |
+| `sdr pr-merge --request_id REQ-0001 --auto-merge` | 可选自动合并；必须先由 PR connector 返回 safe，并记录 scheduler decision。 |
 | `sdr upgrade --default` | 用新版默认脚本/prompt/schema 覆盖旧 workspace。 |
 
 完整命令参考见 [docs/commands.md](docs/commands.md)。

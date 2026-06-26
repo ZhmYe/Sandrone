@@ -20,8 +20,11 @@ set -eu
 # - This script observes PR state only. It must not modify code, branches, or PRs.
 # - Print exactly one TSV line to stdout:
 #   status<TAB>url<TAB>detail
-# - Recommended status values: open, missing, merged, closed, unknown.
+# - Delivery observation status values: open, missing, merged, closed, unknown.
+# - Merge safety probe status values for `sandrone pr-merge`: safe, unsafe, unsupported.
 # - Sandrone marks a request finished only when status is merged.
+# - Sandrone invokes pr-merge only when status is safe, queue decision is ready_for_merge,
+#   and the caller explicitly enabled auto merge.
 # - detail may include platform-specific merge/conflict/outdated notes.
 # - Exit non-zero only when the platform check itself is unsafe or impossible.
 

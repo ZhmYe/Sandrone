@@ -133,6 +133,12 @@ resolve_reviewer_model() {
       reviewer_model="${SANDRONE_DECOMPOSITION_REVIEWER_MODEL:-}"
       reviewer_reasoning_effort="${SANDRONE_DECOMPOSITION_REVIEWER_REASONING_EFFORT:-}"
       ;;
+    RequestScheduleReviewer)
+      env_key_model="SANDRONE_REQUEST_SCHEDULE_REVIEWER_MODEL"
+      env_key_reasoning="SANDRONE_REQUEST_SCHEDULE_REVIEWER_REASONING_EFFORT"
+      reviewer_model="${SANDRONE_REQUEST_SCHEDULE_REVIEWER_MODEL:-}"
+      reviewer_reasoning_effort="${SANDRONE_REQUEST_SCHEDULE_REVIEWER_REASONING_EFFORT:-}"
+      ;;
     *)
       env_key_model="SANDRONE_REVIEWER_MODEL"
       env_key_reasoning="SANDRONE_REVIEWER_REASONING_EFFORT"
@@ -224,6 +230,10 @@ resolve_review_backend() {
     DecompositionReviewer)
       env_key_backend="SANDRONE_DECOMPOSITION_REVIEWER_BACKEND"
       backend="${SANDRONE_DECOMPOSITION_REVIEWER_BACKEND:-}"
+      ;;
+    RequestScheduleReviewer)
+      env_key_backend="SANDRONE_REQUEST_SCHEDULE_REVIEWER_BACKEND"
+      backend="${SANDRONE_REQUEST_SCHEDULE_REVIEWER_BACKEND:-}"
       ;;
   esac
 

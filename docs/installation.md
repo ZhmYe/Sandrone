@@ -185,7 +185,7 @@ SANDRONE_REVIEW_TIMEOUT_SECONDS=1800
 
 ## 代理
 
-在运行 `sdr tick` 的同一个 shell 中设置代理即可。默认 agent/reviewer 脚本会继承环境变量。
+在运行 `sandrone loop start` 的同一个 shell 中设置代理即可。默认 agent/reviewer 脚本会继承环境变量。
 
 ```bash
 export https_proxy=http://127.0.0.1:7890
@@ -202,4 +202,4 @@ gh auth status
 gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
-如果使用内部平台，可以替换 `tools/issue-update.sh`、`tools/pr-create.sh`、`tools/pr-status.sh`、`tools/merge-plan.sh` 和 `tools/pr-merge.sh`，只要遵守 [connectors.md](connectors.md) 的契约即可。
+如果使用内部平台，可以替换 `tools/issue-update.sh`、`tools/pr-create.sh`、`tools/pr-status.sh` 和 `tools/pr-merge.sh`，只要遵守 [connectors.md](connectors.md) 的契约即可。

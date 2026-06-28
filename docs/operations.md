@@ -2,34 +2,38 @@
 
 ## 自动化运行
 
-最简单的周期任务是定时执行：
+推荐用内置 loop 运行自动化：
 
 ```bash
 cd /path/to/workspace
-sdr tick
+sandrone loop start --interval-seconds 900
+sandrone dashboard
+sandrone loop stop
 ```
 
-`tick` 不会运行 `finish`。默认也不会 merge；只有显式开启 `auto_merge` 后，才会在 `wait-finish` request 中每轮最多选择一个执行安全合并检查。
+`loop start` 会在后台重复执行自动化循环；每轮都会抓取需求、派发或收敛 active cohort 内的 agent/reviewer，并串行处理 cohort 内 PR 交付与安全合并。只有没有 active cohort 时，loop 才会运行 RequestScheduleAgent/Reviewer 选择下一批最多 `parallel_limit` 个父 request。`loop stop` 是软停止，不会中断正在写代码或评审的子 agent；它只阻止下一轮继续开始。`loop stop --force` 只终止 loop worker 本身，不强杀已派发 worker。
 
-建议第一次先手动运行：
+active cohort 位于 `.sandrone/state/scheduler/cohort.json`，运行进度位于 `.sandrone/state/scheduler/cohort-progress.json`。cohort 内父 request 全部 `finished` 或 `blocked` 后，会归档到 `last-cohort.json` / `last-cohort-progress.json` 并允许下一轮重新调度。这样同一批并行 request 可以互不影响地推进；先合入的 PR 如果导致同批另一个 PR 冲突，后者会被 PR 状态门禁退回 implementation/code-review，而不是让新批次提前插入。
+
+状态保存会写 `.sandrone/state/loop/wake` 唤醒 loop worker；如果文件事件漏掉，worker 会按 `--interval-seconds` 兜底巡检。
+
+如果要主动暂停某个需求，用 stop 的 request 形态，它会把 request 标记为 blocked:
 
 ```bash
-sdr doctor
-sdr tick
-sdr list
+sandrone loop stop --request_id REQ-0001 --reason "pause for manual inspection"
 ```
 
-确认环境稳定后，再交给 Codex heartbeat、cron、LaunchAgent 或内部调度器。
-
-## Finish 与 PR
-
-自动流程通过 code-review 后停在 `wait-update-pr`。确认 change-doc、review detail 和目标项目验证后：
+恢复 blocked request 用 restart；不指定 request 时会恢复所有 blocked request。恢复后继续自动化请运行 `loop start`:
 
 ```bash
-sdr finish --request_id REQ-0001 --message "feat: add feature"
+sandrone loop restart --request_id REQ-0001
+sandrone loop restart
+sandrone loop start
 ```
 
-`finish` 会：
+## PR 交付
+
+自动流程通过 code-review 后进入 `wait-update-pr`。下一轮 loop 会执行 PR 交付：
 
 1. 校验 change-doc gate 有效。
 2. 在 request worktree 中 commit。
@@ -37,74 +41,26 @@ sdr finish --request_id REQ-0001 --message "feat: add feature"
 4. 调用 `tools/pr-create.sh` 创建或复用 PR。
 5. 成功后标记 `wait-finish`。
 
-如果 PR connector 失败，会保持或回到 `wait-update-pr`，允许修复 connector 后重试。
+如果 PR connector 失败，会保持或回到 `wait-update-pr`，允许修复 connector 后由下一轮 loop 重试。交付成功后进入 `wait-finish`。
 
-`finish` 不会 merge。
+## PR 合并确认与自动合并
 
-## PR 合并确认
+PR 合入确认由 loop 调用 `tools/pr-status.sh` 完成：返回 `merged` 会标记 `finished`；返回 `open` 保持 `wait-finish`；返回 `missing` 或 `closed` 回到 `wait-update-pr`。
 
-PR 合入后运行：
+自动合并每轮最多处理一个 active cohort 内的 `wait-finish` request。只有在 `change-doc` gate 已通过、`tools/pr-status.sh` 返回 `safe` 时，loop 才会调用 `tools/pr-merge.sh`。`unsafe` 会把对应 request/slice 退回 implementation/code-review，`open` 或 `unsupported` 只记录判断结果并等待下一轮，不会强行 merge。
 
-```bash
-sdr pr-status --request_id REQ-0001
-```
+## PR 状态退回
 
-只有 `tools/pr-status.sh` 返回 `merged`，框架才会标记 `finished`。如果返回 `open`，保持 `wait-finish`；如果返回 `missing` 或 `closed`，回到 `wait-update-pr`。
-
-## 可选自动合并
-
-默认流程不会自动 merge。需要机器人合并时，可以单次显式运行：
-
-```bash
-sdr pr-merge --request_id REQ-0001 --auto-merge
-```
-
-也可以开启 tick 调度：
-
-```toml
-# .sandrone/config.toml
-auto_merge = true
-```
-
-或：
-
-```bash
-SANDRONE_AUTO_MERGE=1 sdr tick
-sdr tick --auto-merge
-```
-
-自动合并调度每轮最多处理一个 `wait-finish` request，但不会把 request 完成事件当成合并触发器。开启后，tick 会先刷新所有候选 PR 的轻量状态，写入全局队列和计划:
-
-- `.sandrone/state/scheduler/merge-queue.tsv`
-- `.sandrone/state/scheduler/merge-plan.json`
-- `obsidian/merge/merge-plan.md`
-
-其中 `.sandrone/state/scheduler/*` 是兼容副本；canonical merge planner 运行产物位于 `agents/merge-planner/runs/**/artifacts/`。随后调用 `tools/merge-plan.sh` 选择本轮优先合并的一个 request。这个脚本只决定队列优先级，不审计实现质量，不 merge，不 push。`pr-merge` 只有在 `change-doc` gate 已通过、merge-plan 返回 `ready_for_merge`、`tools/pr-status.sh` 返回 `safe` 时才会调用 `tools/pr-merge.sh`。`open`、`unsafe`、`unsupported`、缺少开关或队列未就绪都会只记录计划和 scheduler decision，不会执行 merge。
-
-## PR Refresh / Rebase
-
-当 PR 与 base/master 冲突，或需要刷新最新 base：
-
-```bash
-sdr pr-refresh --request_id REQ-0001
-```
-
-行为：
+当 PR 与 base/master 冲突，或需要刷新最新 base，loop 不在外层直接 rebase。它会用 `tools/pr-status.sh` 判断状态，并在不可安全合并时退回实现阶段：
 
 1. 调用 `tools/pr-status.sh` 观察 PR。
-2. fetch base。
-3. 尝试 rebase。
-4. clean rebase 时更新文档并派发 IntegrationReviewer worker。
-5. 冲突时记录 `pr-conflicts/attempts/NNN-rebase-conflict.md`，派发 RebaseAgent。
-6. IntegrationReviewer 通过后回到 `wait-update-pr`。
+2. 返回 `unsafe` 时，记录 PR 状态门禁结果。
+3. 把父 request 或最后一个可修复 slice 退回 `code-review-rejected`。
+4. 下一轮 loop 派发 ImplementationAgent，在 worktree 中处理 PR outdated、base/master drift、冲突或平台检查失败。
+5. 修复后重新运行 format/check、TestReviewer 和 DesignReviewer。
+6. 通过后回到 `wait-update-pr`，由下一轮 loop 更新 PR。
 
-之后需要再次运行：
-
-```bash
-sdr finish --request_id REQ-0001 --message "feat: add feature"
-```
-
-rebase 后的非快进推送会使用 `--force-with-lease`。
+之后下一轮 loop 会重新执行 PR 交付；如果更新已存在 PR 需要非快进推送，交付脚本应使用安全的 `--force-with-lease` 或平台等价能力。
 
 ## Block 与 Resume
 
@@ -123,13 +79,12 @@ agents/<kind>/runs/**/logs/stderr.log
 修复外部问题后：
 
 ```bash
-sdr resume --request_id REQ-0001
-sdr tick --request_id REQ-0001
+sandrone loop restart --request_id REQ-0001
 ```
 
-`resume` 不会伪造 approval。它只把 `blocked` 改回下一步可执行状态：
+`loop restart` 不会伪造 approval。它只把 `blocked` 改回下一步可执行状态；下一次 `loop start` 会继续推进：
 
-- 如果 blocked 来自 reviewer/backend/schema/network 的 `gate_unavailable`，恢复到 `decomposition-submitted`、`plan-submitted`、`change-doc-submitted` 或 `integration-review-submitted`，下一次 `tick` 重跑 reviewer。
+- 如果 blocked 来自 reviewer/backend/schema/network 的 `gate_unavailable`，恢复到 `decomposition-submitted`、`plan-submitted` 或 `change-doc-submitted`，下一次 loop 重跑 reviewer。
 - 如果 blocked 来自 reviewer finding、format/check 失败、实现未完成或超过最大轮次，恢复到对应 review-rejected/planning 状态，下一次 `tick` 派发 agent 修复。
 
 不要手写阶段文档 frontmatter 的 `gate_*` 字段，不要恢复旧版 approval 记录，也不要修改 reviewer 输出绕过门禁。gate 不可用时必须先修 reviewer/backend/网络/schema。
@@ -166,9 +121,8 @@ sdr upgrade --default
 
 ```bash
 export SANDRONE_CODEX_APP="/Applications/Codex.app"
-sdr doctor
-sdr resume --request_id REQ-0001
-sdr tick --request_id REQ-0001
+sandrone loop restart --request_id REQ-0001
+sandrone loop start
 ```
 
 ### git pull 失败
@@ -176,8 +130,8 @@ sdr tick --request_id REQ-0001
 `start` 前会在 `dev/repo` 尝试 `git pull --ff-only`。失败时需要先处理目标仓库同步问题，再：
 
 ```bash
-sdr resume --request_id REQ-0001
-sdr tick --request_id REQ-0001
+sandrone loop restart --request_id REQ-0001
+sandrone loop start
 ```
 
 ### reviewer gate unavailable

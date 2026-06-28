@@ -27,7 +27,6 @@ pub(crate) fn write_config(repo_name: &str, git_url: &str, base_branch: &str) ->
         git_url: git_url.to_string(),
         base_branch: base_branch.to_string(),
         parallel_limit: 1,
-        auto_merge: false,
     };
     rewrite_config(&config)
 }
@@ -36,13 +35,12 @@ pub(crate) fn rewrite_config(config: &Config) -> Result<()> {
     fs::write(
         CONFIG_PATH,
         format!(
-            "schema_version = {}\nrepo_name = \"{}\"\ngit_url = \"{}\"\nbase_branch = \"{}\"\nparallel_limit = {}\nauto_merge = {}\n",
+            "schema_version = {}\nrepo_name = \"{}\"\ngit_url = \"{}\"\nbase_branch = \"{}\"\nparallel_limit = {}\n",
             FRAMEWORK_SCHEMA_VERSION,
             toml_escape(&config.repo_name),
             toml_escape(&config.git_url),
             toml_escape(&config.base_branch),
             config.parallel_limit,
-            if config.auto_merge { "true" } else { "false" }
         ),
     )?;
     Ok(())
@@ -216,6 +214,7 @@ pub(crate) fn render_pr_doc_template(request: &Request) -> String {
         ("pr_status_raw", "n/a".to_string()),
         ("pr_status", "not-started".to_string()),
         ("change_doc_approved", "pending".to_string()),
+        ("pr_status_gate", "pending".to_string()),
         ("integration_review_status", "pending".to_string()),
     ]);
     render_template(assets::PR_DOC_TEMPLATE, &values)
@@ -462,11 +461,27 @@ pub(crate) fn write_default_pr_status_tool() -> Result<()> {
     write_executable_file(PR_STATUS_TOOL, default_pr_status_tool_content())
 }
 
-pub(crate) fn write_default_merge_plan_tool() -> Result<()> {
-    if Path::new(MERGE_PLAN_TOOL).exists() {
-        return Ok(());
+pub(crate) fn write_default_request_schedule_tools() -> Result<()> {
+    if !Path::new(REQUEST_SCHEDULE_AGENT_TOOL).exists() {
+        write_executable_file(
+            REQUEST_SCHEDULE_AGENT_TOOL,
+            default_request_schedule_agent_tool_content(),
+        )?;
     }
-    write_executable_file(MERGE_PLAN_TOOL, default_merge_plan_tool_content())
+    if !Path::new(REQUEST_SCHEDULE_REVIEW_TOOL).exists() {
+        write_executable_file(
+            REQUEST_SCHEDULE_REVIEW_TOOL,
+            default_request_schedule_review_tool_content(),
+        )?;
+    }
+    fs::create_dir_all("tools/prompts")?;
+    if !Path::new(REQUEST_SCHEDULE_REVIEW_PROMPT).exists() {
+        fs::write(
+            REQUEST_SCHEDULE_REVIEW_PROMPT,
+            default_request_schedule_review_prompt(),
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn write_default_pr_merge_tool() -> Result<()> {
@@ -484,8 +499,18 @@ fn default_pr_status_tool_content() -> &'static str {
     assets::PR_STATUS_SCRIPT
 }
 
-fn default_merge_plan_tool_content() -> &'static str {
-    assets::MERGE_PLAN_SCRIPT
+fn default_request_schedule_agent_tool_content() -> &'static str {
+    // This script uses the same Codex binary resolver as the implementation agents.
+    // Leak the rendered string just like review tool rendering does for static asset reuse.
+    Box::leak(
+        assets::REQUEST_SCHEDULE_AGENT_SCRIPT
+            .replace("{{CODEX_BIN_RESOLVER}}", codex_bin_resolver_shell())
+            .into_boxed_str(),
+    )
+}
+
+fn default_request_schedule_review_tool_content() -> &'static str {
+    assets::REQUEST_SCHEDULE_REVIEW_SCRIPT
 }
 
 fn default_pr_merge_tool_content() -> &'static str {
@@ -692,9 +717,15 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: true,
         },
         DefaultManagedAsset {
-            path: MERGE_PLAN_TOOL,
-            example_path: MERGE_PLAN_TOOL_EXAMPLE,
-            content: default_merge_plan_tool_content().to_string(),
+            path: REQUEST_SCHEDULE_AGENT_TOOL,
+            example_path: REQUEST_SCHEDULE_AGENT_TOOL_EXAMPLE,
+            content: default_request_schedule_agent_tool_content().to_string(),
+            executable: true,
+        },
+        DefaultManagedAsset {
+            path: REQUEST_SCHEDULE_REVIEW_TOOL,
+            example_path: REQUEST_SCHEDULE_REVIEW_TOOL_EXAMPLE,
+            content: default_request_schedule_review_tool_content().to_string(),
             executable: true,
         },
         DefaultManagedAsset {
@@ -790,6 +821,12 @@ pub(crate) fn default_managed_assets() -> Vec<DefaultManagedAsset> {
             executable: false,
         },
         DefaultManagedAsset {
+            path: REQUEST_SCHEDULE_REVIEW_PROMPT,
+            example_path: REQUEST_SCHEDULE_REVIEW_PROMPT_EXAMPLE,
+            content: default_request_schedule_review_prompt().to_string(),
+            executable: false,
+        },
+        DefaultManagedAsset {
             path: PLAN_REVIEW_PROMPT,
             example_path: PLAN_REVIEW_PROMPT_EXAMPLE,
             content: default_plan_review_prompt().to_string(),
@@ -882,6 +919,10 @@ fn default_implementation_agent_prompt() -> &'static str {
 
 fn default_rebase_agent_prompt() -> &'static str {
     assets::REBASE_AGENT_PROMPT
+}
+
+fn default_request_schedule_review_prompt() -> &'static str {
+    assets::REQUEST_SCHEDULE_REVIEWER_PROMPT
 }
 
 fn default_plan_review_prompt() -> &'static str {

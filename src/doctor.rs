@@ -55,13 +55,6 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
             false,
         ),
         doctor_check(
-            "Merge planner",
-            Path::new(MERGE_PLAN_TOOL).exists(),
-            "merge-plan connector exists",
-            "missing tools/merge-plan.sh; run sandrone upgrade",
-            false,
-        ),
-        doctor_check(
             "Obsidian vault",
             Path::new(".obsidian").is_dir() && Path::new("obsidian/changes").is_dir(),
             "workspace Obsidian vault directories exist",
@@ -86,14 +79,14 @@ pub(crate) fn doctor(args: &[String]) -> Result<()> {
             "CodeGraph index",
             !repo_has_commits(DEV_REPO) || codegraph_index_ready(DEV_REPO),
             "target repo is empty or dev/repo/.codegraph exists",
-            "target repo has commits but dev/repo/.codegraph is missing; run sandrone plan or codegraph init -i dev/repo",
+            "target repo has commits but dev/repo/.codegraph is missing; run sandrone loop start or codegraph init -i dev/repo",
             true,
         ),
         doctor_check(
             "CodeGraph context",
             !repo_has_commits(DEV_REPO) || Path::new("obsidian/codegraph/context.md").exists(),
             "target repo is empty or obsidian/codegraph/context.md exists",
-            "target repo has commits but obsidian/codegraph/context.md is missing; run sandrone plan or codegraph context -p dev/repo <task>",
+            "target repo has commits but obsidian/codegraph/context.md is missing; run sandrone loop start or codegraph context -p dev/repo <task>",
             true,
         ),
     ];

@@ -34,8 +34,8 @@
 
 - PR 创建/更新是否成功: `{{pr_status}}`
 - Change Doc 审核是否通过: `{{change_doc_approved}}`
-- 集成评审: `{{integration_review_status}}`
+- PR 状态门禁: `{{pr_status_gate}}`
 
 ## 风险与后续
 
-如 PR 冲突、rebase、持续集成异常或人工审阅阻塞，请在此保留处理路径，不要写到未勾选 checklist。待后续流程完结后再将状态迁移到 `finished`。
+如 PR 冲突、base/master drift、持续集成异常或人工审阅阻塞，请在此保留处理路径，不要写到未勾选 checklist。`pr-status=unsafe` 会退回 implementation/code-review；待后续流程完结后再将状态迁移到 `finished`。

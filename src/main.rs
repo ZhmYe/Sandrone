@@ -1,29 +1,36 @@
 mod assets;
 mod codegraph;
+mod cohort;
 mod dashboard;
 mod defaults;
 mod delivery;
 mod doc_status;
 mod doctor;
+mod help;
 mod jobs;
-mod merge_plan;
+mod loop_runner;
 mod obsidian;
 mod registry;
+mod request_schedule;
 mod review_gate;
 mod slices;
 mod state;
 mod utils;
 
 pub(crate) use codegraph::*;
+pub(crate) use cohort::*;
 pub(crate) use defaults::*;
 pub(crate) use delivery::{
-    deliver_finished_request, pr_merge_request, run_pr_merge_scheduler_from_tick,
+    deliver_finished_request, ensure_pr_delivery_ready, pr_merge_request,
+    run_delivery_sweep_from_tick,
 };
 pub(crate) use doc_status::*;
 pub(crate) use doctor::doctor;
+pub(crate) use help::print_help;
 pub(crate) use jobs::*;
-pub(crate) use merge_plan::*;
+pub(crate) use loop_runner::{loop_command, loop_worker, request_loop_wake};
 pub(crate) use obsidian::*;
+pub(crate) use request_schedule::*;
 pub(crate) use review_gate::{
     code_review, decomposition_review, integration_review, plan_review, refresh_review_stage,
     review_diagnostic_excerpt, review_worker,
@@ -59,7 +66,8 @@ const ISSUE_AGENT_TOOL: &str = "tools/issue-agent.sh";
 const REBASE_AGENT_TOOL: &str = "tools/rebase-agent.sh";
 const PR_TOOL: &str = "tools/pr-create.sh";
 const PR_STATUS_TOOL: &str = "tools/pr-status.sh";
-const MERGE_PLAN_TOOL: &str = "tools/merge-plan.sh";
+const REQUEST_SCHEDULE_AGENT_TOOL: &str = "tools/request-schedule-agent.sh";
+const REQUEST_SCHEDULE_REVIEW_TOOL: &str = "tools/request-schedule-review.sh";
 const PR_MERGE_TOOL: &str = "tools/pr-merge.sh";
 const CHECK_FORMAT_TOOL: &str = "tools/check-format.sh";
 const PLAN_REVIEW_TOOL: &str = "tools/plan-review.sh";
@@ -77,13 +85,15 @@ const DECOMPOSITION_REVIEW_PROMPT: &str = "tools/prompts/decomposition-reviewer.
 const TEST_REVIEW_PROMPT: &str = "tools/prompts/test-reviewer.md";
 const DESIGN_REVIEW_PROMPT: &str = "tools/prompts/design-reviewer.md";
 const INTEGRATION_REVIEW_PROMPT: &str = "tools/prompts/integration-reviewer.md";
+const REQUEST_SCHEDULE_REVIEW_PROMPT: &str = "tools/prompts/request-schedule-reviewer.md";
 const REVIEW_SCHEMA: &str = "tools/schemas/review-result.schema.json";
 const ISSUE_TOOL_EXAMPLE: &str = "tools/issue-update.example.sh";
 const ISSUE_AGENT_TOOL_EXAMPLE: &str = "tools/issue-agent.example.sh";
 const REBASE_AGENT_TOOL_EXAMPLE: &str = "tools/rebase-agent.example.sh";
 const PR_TOOL_EXAMPLE: &str = "tools/pr-create.example.sh";
 const PR_STATUS_TOOL_EXAMPLE: &str = "tools/pr-status.example.sh";
-const MERGE_PLAN_TOOL_EXAMPLE: &str = "tools/merge-plan.example.sh";
+const REQUEST_SCHEDULE_AGENT_TOOL_EXAMPLE: &str = "tools/request-schedule-agent.example.sh";
+const REQUEST_SCHEDULE_REVIEW_TOOL_EXAMPLE: &str = "tools/request-schedule-review.example.sh";
 const PR_MERGE_TOOL_EXAMPLE: &str = "tools/pr-merge.example.sh";
 const CHECK_FORMAT_TOOL_EXAMPLE: &str = "tools/check-format.example.sh";
 const PLAN_REVIEW_TOOL_EXAMPLE: &str = "tools/plan-review.example.sh";
@@ -101,6 +111,8 @@ const DECOMPOSITION_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/decomposition-r
 const TEST_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/test-reviewer.example.md";
 const DESIGN_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/design-reviewer.example.md";
 const INTEGRATION_REVIEW_PROMPT_EXAMPLE: &str = "tools/prompts/integration-reviewer.example.md";
+const REQUEST_SCHEDULE_REVIEW_PROMPT_EXAMPLE: &str =
+    "tools/prompts/request-schedule-reviewer.example.md";
 const REVIEW_SCHEMA_EXAMPLE: &str = "tools/schemas/review-result.example.schema.json";
 const WORKFLOW_SKILL: &str = "skills/sandrone/SKILL.md";
 const WORKFLOW_SKILL_CONTENT: &str = include_str!("../skills/sandrone/SKILL.md");
@@ -123,7 +135,6 @@ struct Config {
     git_url: String,
     base_branch: String,
     parallel_limit: usize,
-    auto_merge: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -174,16 +185,6 @@ struct SessionRecord {
 #[derive(Clone, Debug)]
 struct PlanPreflight {
     notes: Vec<String>,
-}
-
-struct IntegrationRecord<'a> {
-    mode: &'a str,
-    base_branch: &'a str,
-    base_ref: &'a str,
-    before_head: &'a str,
-    after_head: &'a str,
-    pr_status: &'a str,
-    detail: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -345,6 +346,8 @@ fn run() -> Result<()> {
         "new" => new_workspace(&args),
         "update" => update_requests(),
         "tick" => tick(&args),
+        "loop" => loop_command(&args),
+        "__loop-worker" => loop_worker(&args),
         "advance" => advance_request(&args),
         "doctor" => doctor(&args),
         "doc-status" => show_doc_status(&args),
@@ -436,9 +439,9 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
     ensure_sessions_file()?;
     write_default_issue_tool()?;
     write_default_issue_agent_tool()?;
+    write_default_request_schedule_tools()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
-    write_default_merge_plan_tool()?;
     write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
@@ -471,9 +474,7 @@ fn initialize_cloned_workspace(git_url: &str) -> Result<()> {
         )?;
     } else {
         println!("  repository is empty: skip CodeGraph until the first user request");
-        println!(
-            "  next: wait for a request, then sandrone plan --name <YYYY-MM-DD-name> --request_id <REQ-0001>"
-        );
+        println!("  next: wait for a request, then run sandrone loop start");
     }
     append_event(
         "workspace_initialized",
@@ -510,9 +511,9 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     ensure_sessions_file()?;
     write_default_issue_tool()?;
     write_default_issue_agent_tool()?;
+    write_default_request_schedule_tools()?;
     write_default_pr_tool()?;
     write_default_pr_status_tool()?;
-    write_default_merge_plan_tool()?;
     write_default_pr_merge_tool()?;
     write_default_review_tools()?;
     refresh_default_reference_examples()?;
@@ -532,8 +533,7 @@ fn initialize_empty_workspace(repo_name: &str) -> Result<()> {
     println!("  review tools: {PLAN_REVIEW_TOOL}, {TEST_REVIEW_TOOL}, {DESIGN_REVIEW_TOOL}");
     println!("  workflow skill: {WORKFLOW_SKILL}");
     println!(
-        "  next: sandrone plan --name {}-initial-plan --request_id REQ-0001",
-        today()
+        "  next: describe the initial request, then run sandrone loop start after it is recorded"
     );
     append_event(
         "workspace_initialized",
@@ -646,8 +646,6 @@ fn tick(args: &[String]) -> Result<()> {
             "--max-attempts",
             "--parallel-limit",
             "--parallel_limit",
-            "--auto-merge",
-            "--no-auto-merge",
         ],
     )?;
     let request_id = flag_value(args, "--request_id")?.or(flag_value(args, "--request-id")?);
@@ -657,7 +655,6 @@ fn tick(args: &[String]) -> Result<()> {
         config.parallel_limit,
     )?;
     let max_attempts = parse_max_attempts(flag_value(args, "--max-attempts")?)?;
-    let auto_merge_enabled = resolve_tick_auto_merge(args, config.auto_merge)?;
 
     update_requests()?;
 
@@ -667,28 +664,65 @@ fn tick(args: &[String]) -> Result<()> {
     }
 
     let requests = load_requests()?;
-    let request_ids = select_tick_requests(&requests, request_id.as_deref())?;
+    let mut active_cohort = if request_id.is_none() {
+        reconcile_loop_cohort(&requests)?
+    } else {
+        None
+    };
+    let mut request_ids = if let Some(request_id) = request_id.as_deref() {
+        select_tick_requests(&requests, Some(request_id))?
+    } else if let Some(cohort) = &active_cohort {
+        select_cohort_tick_requests(&requests, cohort)?
+    } else {
+        select_new_cohort_candidates(&requests)
+    };
+    let running_count = running_issue_agent_count(&requests);
     if request_ids.is_empty() {
-        if !run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)? {
+        let delivery_checked =
+            run_delivery_sweep_from_tick(request_id.as_deref(), active_cohort.as_ref())?;
+        if request_id.is_none() && complete_loop_cohort_if_done(&load_requests()?)? {
+            println!("Loop cohort complete; next tick may schedule a new cohort.");
+        }
+        if running_count >= parallel_limit {
+            println!(
+                "Tick parallel limit reached: {running_count}/{parallel_limit} issue-agent(s) already running."
+            );
+        }
+        if !delivery_checked {
             println!("Tick complete: no pending request.");
         }
         return Ok(());
     }
-    let running_count = running_issue_agent_count(&requests);
     if running_count >= parallel_limit {
-        let merge_checked =
-            run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)?;
+        let delivery_checked =
+            run_delivery_sweep_from_tick(request_id.as_deref(), active_cohort.as_ref())?;
         println!(
             "Tick parallel limit reached: {running_count}/{parallel_limit} issue-agent(s) already running."
         );
-        if merge_checked {
-            println!("Tick merge scheduler ran despite issue-agent parallel limit.");
+        if delivery_checked {
+            println!("Tick delivery sweep ran despite issue-agent parallel limit.");
         }
         return Ok(());
     }
     let available_slots = parallel_limit - running_count;
+    let mut delayed_by_schedule_limit = 0usize;
+    if request_id.is_none()
+        && active_cohort.is_none()
+        && !request_ids.is_empty()
+        && available_slots > 0
+    {
+        let original_candidate_count = request_ids.len();
+        let scheduled = schedule_tick_requests(&requests, &request_ids, available_slots)?;
+        if !scheduled.is_empty() {
+            delayed_by_schedule_limit = original_candidate_count.saturating_sub(scheduled.len());
+            active_cohort = create_loop_cohort(&scheduled)?;
+            request_ids = scheduled;
+        } else {
+            request_ids.clear();
+        }
+    }
     let mut remaining_slots = available_slots;
-    let mut delayed_by_limit = 0usize;
+    let mut delayed_by_limit = delayed_by_schedule_limit;
 
     if !Path::new(ISSUE_AGENT_TOOL).exists() {
         return Err(format!("{ISSUE_AGENT_TOOL} does not exist").into());
@@ -725,10 +759,13 @@ fn tick(args: &[String]) -> Result<()> {
         }
     }
 
-    let merge_checked =
-        run_pr_merge_scheduler_from_tick(request_id.as_deref(), auto_merge_enabled)?;
+    let delivery_checked =
+        run_delivery_sweep_from_tick(request_id.as_deref(), active_cohort.as_ref())?;
+    if request_id.is_none() && complete_loop_cohort_if_done(&load_requests()?)? {
+        println!("Loop cohort complete; next tick may schedule a new cohort.");
+    }
 
-    if dispatched.is_empty() && failures.is_empty() && !merge_checked {
+    if dispatched.is_empty() && failures.is_empty() && !delivery_checked {
         println!("Tick complete: no pending request.");
         return Ok(());
     }
@@ -933,9 +970,6 @@ fn inferred_document_phase(request: &Request) -> AgentPhase {
         | "decomposition-review-rejected" => AgentPhase::Decomposition,
         "planning" | "planning-agent-running" | "plan-submitted" | "plan-review-rejected" => {
             AgentPhase::Planning
-        }
-        "rebase-agent-running" | "integration-review-submitted" | "integration-review-rejected" => {
-            AgentPhase::Rebase
         }
         _ => AgentPhase::Implementation,
     }
@@ -1211,9 +1245,7 @@ fn start_worktree_inner(args: &[String]) -> Result<()> {
 
     if request.change_path.is_empty() {
         return Err(format!(
-            "{} has no change packet. Run: sandrone plan --name {}-short-name --request_id {}",
-            request.request_id,
-            today(),
+            "{} has no change packet. Run sandrone loop start to let the outer loop create the required documents.",
             request.request_id
         )
         .into());
@@ -1539,13 +1571,19 @@ fn start_pr_refresh(request_id: &str, max_attempts: Option<u32>) -> Result<()> {
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
     ensure_refreshable_request(&request)?;
-    ensure_gate_approved(&request, "change-doc")?;
-    let resolved_max_attempts = resolve_max_attempts(AgentPhase::Rebase, max_attempts);
-    if review_attempts_exhausted(&request, AgentPhase::Rebase, resolved_max_attempts)? {
+    ensure_pr_delivery_ready(&request)?;
+    let resolved_max_attempts = resolve_max_attempts(AgentPhase::Implementation, max_attempts);
+    if review_attempts_exhausted(&request, AgentPhase::Implementation, resolved_max_attempts)? {
         let reason = format!(
-            "integration-review failed after {resolved_max_attempts} attempt(s); manual recovery is required"
+            "code-review failed after {resolved_max_attempts} attempt(s); manual recovery is required before PR refresh"
         );
-        mark_blocked(&mut requests, index, &mut request, "rebase", &reason)?;
+        mark_blocked(
+            &mut requests,
+            index,
+            &mut request,
+            "implementation",
+            &reason,
+        )?;
         return Err(reason.into());
     }
 
@@ -1579,133 +1617,41 @@ fn start_pr_refresh(request_id: &str, max_attempts: Option<u32>) -> Result<()> {
         }
         return Ok(());
     }
-    let worktree = Path::new(&request.worktree_path);
-    ensure_clean_worktree_for_rebase(worktree)?;
-    let base_ref = fetch_base_ref(worktree, &config.base_branch)?;
-    let before_head = git_output(&request.worktree_path, &["rev-parse", "HEAD"])?;
-    let before_patch = integration_patch_stat(&request.worktree_path, &base_ref);
-    let output = Command::new("git")
-        .args(["rebase", &base_ref])
-        .current_dir(worktree)
-        .envs(proxy_env())
-        .output()?;
-
-    if output.status.success() {
-        let after_head = git_output(&request.worktree_path, &["rev-parse", "HEAD"])?;
-        let after_patch = integration_patch_stat(&request.worktree_path, &base_ref);
-        let detail = format!(
-            "Clean rebase completed without conflicts.\n\nBefore patch stat:\n{}\n\nAfter patch stat:\n{}",
-            before_patch, after_patch
-        );
-        append_integration_record(
-            &request,
-            &IntegrationRecord {
-                mode: "clean-rebase",
-                base_branch: &config.base_branch,
-                base_ref: &base_ref,
-                before_head: &before_head,
-                after_head: &after_head,
-                pr_status: &pr_status.raw,
-                detail: &detail,
-            },
-        )?;
-        mark_integration_review_submitted(
-            &mut requests,
-            index,
-            &mut request,
-            "clean rebase completed",
-        )?;
-        println!("PR refresh clean rebase completed for {request_id}.");
-        run_integration_review_from_tick(request_id)?;
-        println!("Integration review completed for {request_id}.");
-        Ok(())
-    } else {
-        let detail = review_diagnostic_excerpt(&format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-        let record_detail = format!(
-            "Rebase stopped with conflicts or another integration error.\n\nDiagnostic: {detail}\n\nRebaseAgent must preserve both base/master changes and request branch changes."
-        );
-        let attempt = append_pr_conflict_record(
-            &request,
-            &IntegrationRecord {
-                mode: "conflict-rebase",
-                base_branch: &config.base_branch,
-                base_ref: &base_ref,
-                before_head: &before_head,
-                after_head: &before_head,
-                pr_status: &pr_status.raw,
-                detail: &record_detail,
-            },
-        )?;
-        request.status = AgentPhase::Rebase.running_status().to_string();
-        request.updated_at = now_string();
-        requests[index] = request.clone();
-        save_requests(&requests)?;
-        write_status_json(
-            &request,
-            "rebase",
-            AgentPhase::Rebase.running_status(),
-            &detail,
-        )?;
-        upsert_session_for_request(&request, "rebase", AgentPhase::Rebase.running_status())?;
-        reset_phase_document_for_agent_dispatch(&request, AgentPhase::Rebase)?;
-        let pid = spawn_issue_agent(&request, resolved_max_attempts, AgentPhase::Rebase, None)?;
-        append_event(
-            "rebase_agent_dispatched",
-            &request.request_id,
-            "rebase",
-            AgentPhase::Rebase.running_status(),
-            &format!("pid={pid}; base_ref={base_ref}; detail={detail}"),
-        )?;
-        println!("PR refresh rebase conflict for {request_id}.");
-        println!("  conflict record: {attempt:03}");
-        println!("  rebase-agent pid: {pid}");
-        println!("  worktree: {}", request.worktree_path);
-        println!(
-            "  logs: {} | {}",
-            agent_stdout_path(request_id).display(),
-            agent_stderr_path(request_id).display()
-        );
-        Ok(())
-    }
+    let target_id =
+        mark_pr_status_requires_implementation_by_id(request_id, &pr_status, "pr-refresh")?;
+    println!("PR refresh requested for {request_id}; returned {target_id} to implementation.");
+    println!("  pr-status: {}", pr_status.raw);
+    Ok(())
 }
 
 fn continue_pr_refresh(request_id: &str) -> Result<()> {
-    let mut requests = load_requests()?;
+    let requests = load_requests()?;
     let index = find_request_index(&requests, request_id)
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
-    let mut request = requests[index].clone();
+    let request = requests[index].clone();
     ensure_refreshable_request(&request)?;
-    ensure_rebase_ready_for_integration_review(&request)?;
-    append_integration_record(
-        &request,
-        &IntegrationRecord {
-            mode: "manual-continue",
-            base_branch: "",
-            base_ref: "",
-            before_head: "",
-            after_head: "",
-            pr_status: "manual continue",
-            detail: "Manual or external rebase conflict resolution completed; running IntegrationReviewer.",
-        },
+    let config = load_config()?;
+    let pr_status = run_pr_status_tool(&request, &config)?;
+    let target_id = mark_pr_status_requires_implementation_by_id(
+        request_id,
+        &pr_status,
+        "pr-refresh-continue",
     )?;
-    mark_integration_review_submitted(
-        &mut requests,
-        index,
-        &mut request,
-        "manual pr-refresh continue",
-    )?;
-    run_integration_review_from_tick(request_id)?;
-    println!("PR refresh continue completed for {request_id}.");
+    println!("PR refresh continue returned {target_id} to implementation.");
     Ok(())
 }
 
 fn ensure_refreshable_request(request: &Request) -> Result<()> {
     ensure_change_packet(request)?;
-    ensure_gate_approved(request, "plan")?;
+    if is_parent_request(request) {
+        if let Err(plan_error) = ensure_gate_approved(request, "plan")
+            && ensure_gate_approved(request, "decomposition").is_err()
+        {
+            return Err(plan_error);
+        }
+    } else {
+        ensure_gate_approved(request, "plan")?;
+    }
     if request.worktree_path.trim().is_empty() {
         return Err(format!(
             "{} has no worktree. Run sandrone start first.",
@@ -1724,39 +1670,6 @@ fn ensure_refreshable_request(request: &Request) -> Result<()> {
         return Err(format!("worktree does not exist: {}", request.worktree_path).into());
     }
     Ok(())
-}
-
-fn ensure_clean_worktree_for_rebase(worktree: &Path) -> Result<()> {
-    let worktree_string = worktree.to_string_lossy().to_string();
-    let changes = git_output(&worktree_string, &["status", "--porcelain"])?;
-    if !changes.trim().is_empty() {
-        return Err(format!(
-            "worktree must be clean before pr-refresh rebase. Commit, discard, or resolve changes first:\n{changes}"
-        )
-        .into());
-    }
-    Ok(())
-}
-
-fn fetch_base_ref(worktree: &Path, base_branch: &str) -> Result<String> {
-    run_command(
-        Command::new("git")
-            .args(["fetch", "origin", base_branch])
-            .current_dir(worktree)
-            .envs(proxy_env()),
-    )?;
-    let remote_ref = format!("origin/{base_branch}");
-    let worktree_string = worktree.to_string_lossy().to_string();
-    if git_output(&worktree_string, &["rev-parse", "--verify", &remote_ref]).is_ok() {
-        Ok(remote_ref)
-    } else {
-        Ok(base_branch.to_string())
-    }
-}
-
-fn integration_patch_stat(worktree: &str, base_ref: &str) -> String {
-    git_output(worktree, &["diff", "--stat", &format!("{base_ref}...HEAD")])
-        .unwrap_or_else(|error| format!("unable to compute patch stat: {error}"))
 }
 
 fn run_pr_status_tool(request: &Request, config: &Config) -> Result<PrStatusReport> {
@@ -1824,149 +1737,104 @@ fn parse_pr_status_report(line: &str) -> PrStatusReport {
     }
 }
 
-fn append_integration_record(request: &Request, record: &IntegrationRecord<'_>) -> Result<()> {
-    let timestamp = now_string();
-    let path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
-    let mut content = fs::read_to_string(&path)?;
-    if !content.ends_with('\n') {
-        content.push('\n');
-    }
-    content.push_str(&format!(
-        "\n## PR 集成刷新记录\n\n- 时间: `{}`\n- 模式: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- Rebase 后 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n### 集成处理要求\n\n- RebaseAgent 和 IntegrationReviewer 必须确认冲突解决保留 base/master 新代码，也保留 request 分支已通过 review 的实现语义。\n- 不能为了自己分支的修改删除 base/master 新代码；如果必须替换，需要在本节写明原因、影响和验证证据。\n\n### 集成细节\n\n{}\n",
-        timestamp,
-        markdown_inline(record.mode),
-        markdown_inline(record.base_branch),
-        markdown_inline(record.base_ref),
-        markdown_inline(record.before_head),
-        markdown_inline(record.after_head),
-        markdown_inline(record.pr_status),
-        record.detail.trim_end(),
-    ));
-    fs::write(path, content)?;
-    Ok(())
-}
-
-fn append_pr_conflict_record(request: &Request, record: &IntegrationRecord<'_>) -> Result<u32> {
-    let timestamp = now_string();
-    let attempt = next_pr_conflict_attempt(request)?;
-    let attempt_path = pr_conflict_attempt_path(request, attempt);
-    if let Some(parent) = attempt_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let detail = record.detail.trim_end();
-    let record_content = format!(
-        "# PR 冲突记录 Attempt {attempt:03}\n\n- Request ID: `{}`\n- 时间: `{}`\n- 模式: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n## 冲突诊断\n\n{}\n\n## 处理约束\n\n- RebaseAgent 必须同时保留 base/master 新代码和 request 分支已通过 review 的实现语义。\n- 不得为了消除冲突直接删除 master 上的新代码；如确需替换，必须说明原因、影响和验证证据。\n- 冲突解决后必须通过 IntegrationReviewer，并在 `change-doc.md` 中记录解决方式、实现前后对比和验证结果。\n",
-        request.request_id,
-        timestamp,
-        markdown_inline(record.mode),
-        markdown_inline(record.base_branch),
-        markdown_inline(record.base_ref),
-        markdown_inline(record.before_head),
-        markdown_inline(record.pr_status),
-        detail,
+fn mark_pr_status_requires_implementation_by_id(
+    request_id: &str,
+    report: &PrStatusReport,
+    trigger: &str,
+) -> Result<String> {
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let root_request = requests[index].clone();
+    let target_id = pr_status_rework_target_request_id(&requests, &root_request);
+    let target_index = find_request_index(&requests, &target_id)
+        .ok_or_else(|| format!("unknown PR status rework target request_id: {target_id}"))?;
+    let mut target = requests[target_index].clone();
+    ensure_change_packet(&target)?;
+    let reason = format!(
+        "PR status requires implementation refresh: trigger={trigger}; status={}; detail={}; raw={}",
+        report.status,
+        fallback_empty(&report.detail, "n/a"),
+        report.raw
     );
-    fs::write(&attempt_path, record_content)?;
-
-    let change_doc_path = existing_or_preferred_request_artifact_path(request, "change-doc.md");
-    let mut change_doc = fs::read_to_string(&change_doc_path)?;
-    if !change_doc.ends_with('\n') {
-        change_doc.push('\n');
-    }
-    change_doc.push_str(&format!(
-        "\n## PR 冲突记录 (Attempt {attempt:03})\n\n- 冲突记录: `{}`\n- 时间: `{}`\n- Base branch: `{}`\n- Base ref: `{}`\n- Rebase 前 HEAD: `{}`\n- PR 状态脚本: `{}`\n\n### 冲突诊断\n\n{}\n",
-        markdown_inline(&attempt_path.to_string_lossy()),
-        timestamp,
-        markdown_inline(record.base_branch),
-        markdown_inline(record.base_ref),
-        markdown_inline(record.before_head),
-        markdown_inline(record.pr_status),
-        detail,
-    ));
-    fs::write(change_doc_path, change_doc)?;
-    Ok(attempt)
-}
-
-fn next_pr_conflict_attempt(request: &Request) -> Result<u32> {
-    let dir = pr_conflict_attempts_dir(request);
-    if !dir.exists() {
-        return Ok(1);
-    }
-    let mut max_attempt = 0u32;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let filename = entry.file_name().to_string_lossy().to_string();
-        let Some((attempt_text, _rest)) = filename.split_once('-') else {
-            continue;
-        };
-        let Ok(attempt) = attempt_text.parse::<u32>() else {
-            continue;
-        };
-        max_attempt = max_attempt.max(attempt);
-    }
-    Ok(max_attempt + 1)
-}
-
-fn pr_conflict_attempts_dir(request: &Request) -> PathBuf {
-    Path::new(&request.change_path)
-        .join("pr-conflicts")
-        .join("attempts")
-}
-
-fn pr_conflict_attempt_path(request: &Request, attempt: u32) -> PathBuf {
-    pr_conflict_attempts_dir(request).join(format!("{attempt:03}-rebase-conflict.md"))
-}
-
-fn mark_integration_review_submitted(
-    requests: &mut [Request],
-    index: usize,
-    request: &mut Request,
-    reason: &str,
-) -> Result<()> {
-    request.status = "integration-review-submitted".to_string();
-    request.updated_at = now_string();
-    requests[index] = request.clone();
-    save_requests(requests)?;
-    write_status_json(request, "rebase", "integration-review-submitted", reason)?;
-    append_event(
-        "integration_review_submitted",
-        &request.request_id,
-        "rebase",
-        "integration-review-submitted",
-        reason,
+    target.status = "code-review-rejected".to_string();
+    target.updated_at = now_string();
+    write_approval_record(
+        &target,
+        "change-doc",
+        "rejected",
+        "pr-status",
+        "pr-status",
+        &reason,
     )?;
-    upsert_session_for_request(request, "rebase", "waiting-review")
-}
-
-fn ensure_rebase_ready_for_integration_review(request: &Request) -> Result<()> {
-    if git_internal_path(&request.worktree_path, "rebase-merge").exists()
-        || git_internal_path(&request.worktree_path, "rebase-apply").exists()
+    requests[target_index] = target.clone();
+    if let Some(parent_id) = slice_parent_id(&target)
+        && let Some(parent_index) = find_request_index(&requests, &parent_id)
     {
-        return Err(
-            "rebase is still in progress; complete or abort it before integration-review".into(),
-        );
+        let mut parent = requests[parent_index].clone();
+        if !matches!(
+            canonical_status(&parent.status),
+            STATUS_FINISHED | "blocked"
+        ) {
+            parent.status = STATUS_SLICES_RUNNING.to_string();
+            parent.updated_at = now_string();
+            requests[parent_index] = parent.clone();
+            write_status_json(
+                &parent,
+                "decomposition",
+                STATUS_SLICES_RUNNING,
+                &format!(
+                    "PR status returned request to slice implementation: {}",
+                    target.request_id
+                ),
+            )?;
+            append_event(
+                "parent_reopened_for_pr_status",
+                &parent.request_id,
+                "decomposition",
+                STATUS_SLICES_RUNNING,
+                &format!("slice={}; {reason}", target.request_id),
+            )?;
+            upsert_session_for_request(&parent, "implementation", STATUS_SLICES_RUNNING)?;
+        }
     }
-    let unmerged = git_output(
-        &request.worktree_path,
-        &["diff", "--name-only", "--diff-filter=U"],
+    save_requests(&requests)?;
+    write_status_json(&target, "implementation", "code-review-rejected", &reason)?;
+    append_event(
+        "pr_status_requires_implementation",
+        &target.request_id,
+        "implementation",
+        "code-review-rejected",
+        &reason,
     )?;
-    if !unmerged.trim().is_empty() {
-        return Err(format!("unmerged conflict files remain:\n{unmerged}").into());
-    }
-    Ok(())
+    upsert_session_for_request(&target, "implementation", "review-rejected")?;
+    Ok(target.request_id)
 }
 
-fn git_internal_path(worktree: &str, name: &str) -> PathBuf {
-    let path = git_output(worktree, &["rev-parse", "--git-path", name])
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| Path::new(".git").join(name));
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(worktree).join(path)
+fn pr_status_rework_target_request_id(requests: &[Request], request: &Request) -> String {
+    if is_slice_request(request) {
+        return request.request_id.clone();
     }
+    let mut slices = requests
+        .iter()
+        .filter(|candidate| {
+            slice_parent_id(candidate).as_deref() == Some(&request.request_id)
+                && !candidate.branch.trim().is_empty()
+                && !candidate.worktree_path.trim().is_empty()
+                && matches!(
+                    canonical_status(&candidate.status),
+                    STATUS_SLICE_FINISHED
+                        | STATUS_WAIT_UPDATE_PR
+                        | STATUS_WAIT_FINISH
+                        | STATUS_FINISHED
+                )
+        })
+        .collect::<Vec<_>>();
+    slices.sort_by(|left, right| left.request_id.cmp(&right.request_id));
+    slices
+        .last()
+        .map(|slice| slice.request_id.clone())
+        .unwrap_or_else(|| request.request_id.clone())
 }
 
 fn block_request(args: &[String]) -> Result<()> {
@@ -2067,7 +1935,10 @@ fn resume_request(args: &[String]) -> Result<()> {
     } else {
         println!("  resumed status: {}", request.status);
     }
-    println!("  next: sandrone tick --request_id {}", request.request_id);
+    println!(
+        "  next: sandrone loop restart --request_id {} && sandrone loop start",
+        request.request_id
+    );
     Ok(())
 }
 
@@ -2260,7 +2131,7 @@ fn blocked_stage_to_agent_phase(request: &Request, stage: &str) -> AgentPhase {
     match stage {
         "decomposition" | "decomposition-review" => AgentPhase::Decomposition,
         "planning" | "plan-review" => AgentPhase::Planning,
-        "rebase" | "integration-review" => AgentPhase::Rebase,
+        "rebase" | "integration-review" => AgentPhase::Implementation,
         "implementation" | "code-review" | "agent" => AgentPhase::Implementation,
         _ if is_parent_request(request) => AgentPhase::Decomposition,
         _ if ensure_gate_approved(request, "plan").is_ok() => AgentPhase::Implementation,
@@ -2291,7 +2162,7 @@ fn submitted_status_for_phase(phase: AgentPhase) -> &'static str {
         AgentPhase::Decomposition => "decomposition-submitted",
         AgentPhase::Planning => "plan-submitted",
         AgentPhase::Implementation => "change-doc-submitted",
-        AgentPhase::Rebase => "integration-review-submitted",
+        AgentPhase::Rebase => "change-doc-submitted",
     }
 }
 
@@ -2300,7 +2171,7 @@ fn rejected_status_for_phase(phase: AgentPhase) -> &'static str {
         AgentPhase::Decomposition => "decomposition-review-rejected",
         AgentPhase::Planning => "plan-review-rejected",
         AgentPhase::Implementation => "code-review-rejected",
-        AgentPhase::Rebase => "integration-review-rejected",
+        AgentPhase::Rebase => "code-review-rejected",
     }
 }
 
@@ -2309,7 +2180,7 @@ fn review_stage_for_phase(phase: AgentPhase) -> &'static str {
         AgentPhase::Decomposition => "decomposition-review",
         AgentPhase::Planning => "plan-review",
         AgentPhase::Implementation => "code-review",
-        AgentPhase::Rebase => "integration-review",
+        AgentPhase::Rebase => "code-review",
     }
 }
 
@@ -2803,7 +2674,10 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    if ensure_gate_approved(&request, "change-doc").is_ok() {
+    let canonical = canonical_status(&request.status);
+    if ensure_gate_approved(&request, "change-doc").is_ok()
+        && !matches!(canonical, STATUS_WAIT_UPDATE_PR | STATUS_WAIT_FINISH)
+    {
         if is_slice_request(&request) {
             mark_slice_finished_by_id(
                 &request.request_id,
@@ -2847,10 +2721,9 @@ fn refresh_request_status_by_id(request_id: &str) -> Result<bool> {
         "planning-agent-running" => refresh_agent_phase(&request, AgentPhase::Planning),
         "implementation-agent-running" => refresh_agent_phase(&request, AgentPhase::Implementation),
         "rebase-agent-running" => refresh_agent_phase(&request, AgentPhase::Rebase),
-        "integration-review-submitted" => run_integration_review_from_tick(&request.request_id),
-        "integration-review-running" => {
-            refresh_review_stage(&request.request_id, "integration-review")
-        }
+        "integration-review-submitted" => run_code_review_from_tick(&request.request_id),
+        "integration-review-running" => refresh_review_stage(&request.request_id, "code-review"),
+        "integration-review-rejected" => Ok(false),
         "agent-running" => refresh_legacy_agent_status(&request),
         _ => Ok(false),
     }
@@ -3032,7 +2905,7 @@ fn next_agent_phase(request: &Request) -> Result<Option<AgentPhase>> {
         return Ok(Some(AgentPhase::Planning));
     }
     if request.status == "integration-review-rejected" {
-        return Ok(Some(AgentPhase::Rebase));
+        return Ok(Some(AgentPhase::Implementation));
     }
     if ensure_gate_approved(request, "plan").is_ok() {
         if ensure_gate_approved(request, "change-doc").is_ok() {
@@ -3147,30 +3020,8 @@ fn refresh_agent_phase(request: &Request, phase: AgentPhase) -> Result<bool> {
             run_code_review_from_tick(&request.request_id)
         }
         AgentPhase::Rebase => {
-            ensure_rebase_ready_for_integration_review(request)?;
-            let mut requests = load_requests()?;
-            let index = find_request_index(&requests, &request.request_id)
-                .ok_or_else(|| format!("unknown request_id: {}", request.request_id))?;
-            let mut refreshed = requests[index].clone();
-            append_integration_record(
-                &refreshed,
-                &IntegrationRecord {
-                    mode: "rebase-agent-completed",
-                    base_branch: "",
-                    base_ref: "",
-                    before_head: "",
-                    after_head: "",
-                    pr_status: "agent completed",
-                    detail: "RebaseAgent exited successfully; running IntegrationReviewer.",
-                },
-            )?;
-            mark_integration_review_submitted(
-                &mut requests,
-                index,
-                &mut refreshed,
-                "rebase agent completed",
-            )?;
-            run_integration_review_from_tick(&request.request_id)
+            submit_gate_from_tick(&request.request_id, "change-doc")?;
+            run_code_review_from_tick(&request.request_id)
         }
     }
 }
@@ -3295,20 +3146,12 @@ fn run_code_review_from_tick(request_id: &str) -> Result<bool> {
     }
 }
 
-fn run_integration_review_from_tick(request_id: &str) -> Result<bool> {
-    let args = vec!["--request_id".to_string(), request_id.to_string()];
-    match integration_review(&args) {
-        Ok(()) => Ok(true),
-        Err(error) if is_review_terminal_error(&error.to_string()) => Ok(true),
-        Err(error) => Err(error),
-    }
-}
-
 fn is_review_terminal_error(message: &str) -> bool {
     message.contains("rejected decomposition review")
         || message.contains("rejected plan review")
         || message.contains("rejected code review")
         || message.contains("rejected integration review")
+        || message.contains("rejected pr schedule review")
         || message.contains("format check failed before code-review")
         || message.contains("review gate unavailable")
         || message.contains("gate unavailable")
@@ -3371,32 +3214,6 @@ fn parse_parallel_limit(value: Option<String>, default_limit: usize) -> Result<u
         return Err("--parallel-limit must be greater than 0".into());
     }
     Ok(parsed)
-}
-
-fn resolve_tick_auto_merge(args: &[String], config_default: bool) -> Result<bool> {
-    let enabled_by_flag = flag_present(args, "--auto-merge");
-    let disabled_by_flag = flag_present(args, "--no-auto-merge");
-    if enabled_by_flag && disabled_by_flag {
-        return Err("--auto-merge and --no-auto-merge cannot be used together".into());
-    }
-    if enabled_by_flag {
-        return Ok(true);
-    }
-    if disabled_by_flag {
-        return Ok(false);
-    }
-    match env::var("SANDRONE_AUTO_MERGE") {
-        Ok(value) if !value.trim().is_empty() => parse_bool_value(&value, "SANDRONE_AUTO_MERGE"),
-        _ => Ok(config_default),
-    }
-}
-
-fn parse_bool_value(value: &str, name: &str) -> Result<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(format!("{name} must be one of true/false, 1/0, yes/no, or on/off").into()),
-    }
 }
 
 fn phase_default_max_attempts(phase: AgentPhase) -> u32 {
@@ -3958,17 +3775,6 @@ fn read_agent_pid(request_id: &str) -> Result<Option<u32>> {
     Ok(pid)
 }
 
-fn process_is_running(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 fn agent_job_state_dir(request_id: &str) -> PathBuf {
     runtime_agent_job_state_dir(request_id)
 }
@@ -4184,8 +3990,11 @@ fn validate_gate(gate: &str) -> Result<()> {
 
 fn validate_session_phase(phase: &str) -> Result<()> {
     match phase {
-        "decomposition" | "planning" | "implementation" | "rebase" => Ok(()),
-        _ => Err("phase must be `decomposition`, `planning`, `implementation`, or `rebase`".into()),
+        "decomposition" | "planning" | "implementation" | "rebase" | "delivery" => Ok(()),
+        _ => Err(
+            "phase must be `decomposition`, `planning`, `implementation`, `rebase`, or `delivery`"
+                .into(),
+        ),
     }
 }
 
@@ -4349,9 +4158,11 @@ fn stage_for_status_json(status: &str) -> &'static str {
         | "change-doc-submitted"
         | "change-doc-approved"
         | "code-review-running"
-        | "code-review-rejected" => "implementation",
-        "rebase-agent-running" | "integration-review-rejected" => "rebase",
-        "integration-review-submitted" | "integration-review-running" => "integration-review",
+        | "code-review-rejected"
+        | "rebase-agent-running"
+        | "integration-review-submitted"
+        | "integration-review-running"
+        | "integration-review-rejected" => "implementation",
         STATUS_WAIT_UPDATE_PR | STATUS_WAIT_FINISH | STATUS_FINISHED => "delivery",
         "blocked" => "blocked",
         _ => "planning",
@@ -4402,22 +4213,11 @@ fn usage(command: &str) -> Result<()> {
     Err(format!("usage: sandrone {command}").into())
 }
 
-fn print_help() {
-    println!(
-        "Usage: sandrone <command>\n\nCommands:\n  new (--url <git-url> | --name <project-name>)\n  update\n  list\n  dashboard [--host 127.0.0.1] [--port 47217] [--json]\n  status [REQ-0001]\n  validate\n  tick [--request_id <REQ-0001>] [--max-attempts <n>] [--parallel-limit 1] [--auto-merge]\n  advance --request_id <REQ-0001> [--max-attempts <n>]\n  doctor\n  doc-status --request_id <REQ-0001> [--phase <decomposition|planning|implementation|rebase>]\n  obsidian-refresh\n  decompose --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  plan --name <YYYY-MM-DD-short-name> --request_id <REQ-0001>\n  submit --request_id <REQ-0001> --gate <decomposition|plan|change-doc>\n  approve --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  reject --request_id <REQ-0001> --gate <decomposition|plan|change-doc> --by <actor>\n  gates --request_id <REQ-0001> [--json]\n  decomposition-review --request_id <REQ-0001>\n  plan-review --request_id <REQ-0001>\n  code-review --request_id <REQ-0001>\n  integration-review --request_id <REQ-0001>\n  start --request_id <REQ-0001>\n  finish --request_id <REQ-0001> [--message \"feat: ...\"]\n  pr-status --request_id <REQ-0001>\n  pr-merge --request_id <REQ-0001> [--queue-decision ready_for_merge] [--auto-merge]\n  pr-refresh --request_id <REQ-0001> [--mode <start|continue>] [--max-attempts <n>]\n  block --request_id <REQ-0001> --stage <stage> --reason <reason>\n  resume --request_id <REQ-0001>\n  session --request_id <REQ-0001> --phase <decomposition|planning|implementation|rebase> [--thread_id <id>] [--thread_url <url>] [--status <status>]\n  sessions [--json]\n  upgrade [--dry-run] [--default]\n\nAliases:\n  approvals -> gates\n\nReview attempt defaults:\n  decomposition-review: {DEFAULT_DECOMPOSITION_MAX_ATTEMPTS}\n  plan-review: {DEFAULT_PLAN_MAX_ATTEMPTS}\n  code-review: {DEFAULT_CODE_MAX_ATTEMPTS}\n  integration-review: {DEFAULT_INTEGRATION_MAX_ATTEMPTS}\n\n--max-attempts <n> overrides the default for the current automatic run."
-    );
-}
-
-fn dashboard_html() -> &'static str {
-    assets::DASHBOARD_HTML
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         AgentPhase, DEFAULT_CODE_MAX_ATTEMPTS, DEFAULT_DECOMPOSITION_MAX_ATTEMPTS,
-        DEFAULT_INTEGRATION_MAX_ATTEMPTS, DEFAULT_PLAN_MAX_ATTEMPTS, dashboard_html,
-        resolve_max_attempts,
+        DEFAULT_INTEGRATION_MAX_ATTEMPTS, DEFAULT_PLAN_MAX_ATTEMPTS, resolve_max_attempts,
     };
 
     #[test]
@@ -4439,57 +4239,5 @@ mod tests {
             DEFAULT_INTEGRATION_MAX_ATTEMPTS
         );
         assert_eq!(resolve_max_attempts(AgentPhase::Planning, Some(9)), 9);
-    }
-
-    #[test]
-    fn dashboard_html_uses_list_requests_and_rich_artifact_renderers() {
-        let html = dashboard_html();
-        assert!(html.contains("display: flex;"));
-        assert!(html.contains("class=\"request-list\""));
-        assert!(html.contains("timeline-track"));
-        assert!(html.contains("timeline-main"));
-        assert!(html.contains("timeline-branch"));
-        assert!(html.contains("hasIntegrationFlow"));
-        assert!(html.contains("isLowerTimelineStage"));
-        assert!(html.contains("orderedLowerTimelineStages"));
-        assert!(html.contains("lowerStageMarker"));
-        assert!(html.contains("updateIntegrationConnector"));
-        assert!(html.contains("request.pr?.stages?.length"));
-        assert!(html.contains("prPaneSubtitle"));
-        assert!(html.contains("kind: \"pr\""));
-        assert!(html.contains("pane.kind === \"pr\""));
-        assert!(html.contains("visibleTimelineItems(indexedStages, hasIntegration, pane.kind)"));
-        assert!(html.contains("renderArtifactTabs"));
-        assert!(html.contains("Review 结果"));
-        assert!(html.contains("integration-connector-path"));
-        assert!(html.contains("stroke: var(--line-strong);"));
-        assert!(html.contains(".stage.branch .dot { border-color: var(--line-strong);"));
-        assert!(!html.contains("stroke: #d6a31f;"));
-        assert!(!html.contains("background: #e7c46a;"));
-        assert!(html.contains("marked.min.js"));
-        assert!(html.contains("DOMPurify"));
-        assert!(html.contains("highlight.js"));
-        assert!(html.contains("jsoneditor.min.js"));
-        assert!(html.contains("renderMarkdownContent"));
-        assert!(html.contains("mountJsonViewer"));
-        assert!(html.contains("data-json-detail"));
-        assert!(html.contains("reviewerDisplayStatus(item)"));
-        assert!(html.contains("reviewerHasDetail(reviewer)"));
-        assert!(!html.contains("item.runtime_status || item.decision"));
-        assert!(html.contains("orderedRequests(project)"));
-        assert!(html.contains("request.status === \"finished\" ? 1 : 0"));
-        assert!(html.contains("PR 待合并"));
-        assert!(html.contains("tag(\"blocked\", \"blocked\""));
-        assert!(html.contains("tag(\"pending\", \"pending\""));
-        assert!(html.contains("tag(\"finish\", \"finish\""));
-        assert!(html.contains("if (status === \"finished\") return \"done\";"));
-        assert!(html.contains("querySelector('[data-stage-id=\"code-review\"]')"));
-        assert!(!html.contains("querySelector('[data-stage-id=\"implementation\"]')"));
-        assert!(!html.contains(
-            "status === \"wait-update-pr\" || status === \"change-doc-approved\") return \"done\""
-        ));
-        assert!(!html.contains("tag(\"waiting\""));
-        assert!(!html.contains("tag(\"running\""));
-        assert!(!html.contains("tag(\"\", \"requests\""));
     }
 }

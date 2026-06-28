@@ -68,6 +68,6 @@ flowchart LR
 
 根据 `status.json` 和 review gate 决定下一步。常见入口:
 
-- 继续自动推进: `sandrone tick --request_id {{request_id}}`
+- 继续自动推进: `sandrone loop restart --request_id {{request_id}}` 后运行 `sandrone loop start`
 - 查看 gate 状态: `sandrone gates --request_id {{request_id}}`
 - 查看状态: `sandrone status {{request_id}}`

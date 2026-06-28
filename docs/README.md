@@ -5,7 +5,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [installation.md](installation.md) | 安装、依赖、Codex CLI 路径、代理、`.env` 模型路由、CodeGraph 和 Obsidian 准备。 |
-| [workflow.md](workflow.md) | request/slice 生命周期、review gate、并发调度、PR refresh 支线。 |
+| [workflow.md](workflow.md) | request/slice 生命周期、review gate、并发调度、PR 状态退回。 |
 | [commands.md](commands.md) | CLI 命令参考。 |
 | [workspace-layout.md](workspace-layout.md) | workspace 目录、机器状态、runtime 文档包和全局 registry。 |
 | [connectors.md](connectors.md) | `tools/*.sh` 可替换脚本的输入输出契约。 |

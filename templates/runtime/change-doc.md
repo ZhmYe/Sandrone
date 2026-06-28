@@ -77,4 +77,4 @@ updated_at: {{updated_at}}
 
 ## 审批门禁
 
-填写完成后等待 wrapper hook 调用外层 `sandrone advance` 提交 change-doc gate 并运行 code-review。审批通过前不得运行 `sandrone finish --request_id {{request_id}}`，也不得 commit、push、创建 PR 或 merge。
+填写完成后等待外层 loop 提交 change-doc gate 并运行 code-review。审批通过前不得 commit、push、创建 PR 或 merge。

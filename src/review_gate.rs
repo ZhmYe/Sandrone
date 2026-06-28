@@ -1862,7 +1862,7 @@ fn normalize_recommended_next_phase(
     gate_unavailable: bool,
 ) -> String {
     match value.trim() {
-        "planning" | "implementation" | "blocked" => value.trim().to_string(),
+        "planning" | "implementation" | "delivery" | "blocked" => value.trim().to_string(),
         _ => default_recommended_next_phase(reviewer, approved, gate_unavailable).to_string(),
     }
 }
@@ -2094,6 +2094,12 @@ fn recommended_next_phase(results: &[ReviewResult], default_phase: &str) -> Stri
         .any(|result| result.recommended_next_phase == "implementation")
     {
         return "implementation".to_string();
+    }
+    if results
+        .iter()
+        .any(|result| result.recommended_next_phase == "delivery")
+    {
+        return "delivery".to_string();
     }
     default_phase.to_string()
 }

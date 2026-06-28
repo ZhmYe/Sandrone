@@ -51,4 +51,4 @@
 - 已运行目标项目合理测试；无法运行时已写清原因、风险和替代证据。
 - `change-doc.md` 已记录冲突原因、解决方式、实现前后对比、base/master 保留证明和验证结果。
 
-只有上述自检都满足，才可以在最后更新 `$SANDRONE_AGENT_STATUS_DOC`，也就是 `change-doc.md` 的 frontmatter，写入 `agent_phase: rebase`、`agent_status: submitted`、`agent_ready_for_review: true` 和本轮验证摘要，然后退出码 0，让外层 `advance` 派发 IntegrationReviewer worker。无法满足时不得标记 submitted，必须 block 或非零退出。
+只有上述自检都满足，才可以在最后更新 `$SANDRONE_AGENT_STATUS_DOC`，也就是 `change-doc.md` 的 frontmatter，写入 `agent_phase: rebase`、`agent_status: submitted`、`agent_ready_for_review: true` 和本轮验证摘要，然后退出码 0，让外层 loop/内部推进器派发 IntegrationReviewer worker。无法满足时不得标记 submitted，必须 block 或非零退出。

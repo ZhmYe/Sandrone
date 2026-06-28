@@ -96,6 +96,10 @@ fn handle_dashboard_stream(stream: &mut TcpStream) -> Result<()> {
     Ok(())
 }
 
+fn dashboard_html() -> &'static str {
+    assets::DASHBOARD_HTML
+}
+
 fn write_http_response(
     stream: &mut TcpStream,
     status: &str,
@@ -1077,4 +1081,61 @@ fn render_review_findings_json(content: &str, severity: &str) -> String {
     }
     rendered.push(']');
     rendered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dashboard_html;
+
+    #[test]
+    fn dashboard_html_uses_list_requests_and_rich_artifact_renderers() {
+        let html = dashboard_html();
+        assert!(html.contains("display: flex;"));
+        assert!(html.contains("class=\"request-list\""));
+        assert!(html.contains("timeline-track"));
+        assert!(html.contains("timeline-main"));
+        assert!(html.contains("timeline-branch"));
+        assert!(html.contains("hasIntegrationFlow"));
+        assert!(html.contains("isLowerTimelineStage"));
+        assert!(html.contains("orderedLowerTimelineStages"));
+        assert!(html.contains("lowerStageMarker"));
+        assert!(html.contains("updateIntegrationConnector"));
+        assert!(html.contains("request.pr?.stages?.length"));
+        assert!(html.contains("prPaneSubtitle"));
+        assert!(html.contains("kind: \"pr\""));
+        assert!(html.contains("pane.kind === \"pr\""));
+        assert!(html.contains("visibleTimelineItems(indexedStages, hasIntegration, pane.kind)"));
+        assert!(html.contains("renderArtifactTabs"));
+        assert!(html.contains("Review 结果"));
+        assert!(html.contains("integration-connector-path"));
+        assert!(html.contains("stroke: var(--line-strong);"));
+        assert!(html.contains(".stage.branch .dot { border-color: var(--line-strong);"));
+        assert!(!html.contains("stroke: #d6a31f;"));
+        assert!(!html.contains("background: #e7c46a;"));
+        assert!(html.contains("marked.min.js"));
+        assert!(html.contains("DOMPurify"));
+        assert!(html.contains("highlight.js"));
+        assert!(html.contains("jsoneditor.min.js"));
+        assert!(html.contains("renderMarkdownContent"));
+        assert!(html.contains("mountJsonViewer"));
+        assert!(html.contains("data-json-detail"));
+        assert!(html.contains("reviewerDisplayStatus(item)"));
+        assert!(html.contains("reviewerHasDetail(reviewer)"));
+        assert!(!html.contains("item.runtime_status || item.decision"));
+        assert!(html.contains("orderedRequests(project)"));
+        assert!(html.contains("request.status === \"finished\" ? 1 : 0"));
+        assert!(html.contains("PR 待合并"));
+        assert!(html.contains("tag(\"blocked\", \"blocked\""));
+        assert!(html.contains("tag(\"pending\", \"pending\""));
+        assert!(html.contains("tag(\"finish\", \"finish\""));
+        assert!(html.contains("if (status === \"finished\") return \"done\";"));
+        assert!(html.contains("querySelector('[data-stage-id=\"code-review\"]')"));
+        assert!(!html.contains("querySelector('[data-stage-id=\"implementation\"]')"));
+        assert!(!html.contains(
+            "status === \"wait-update-pr\" || status === \"change-doc-approved\") return \"done\""
+        ));
+        assert!(!html.contains("tag(\"waiting\""));
+        assert!(!html.contains("tag(\"running\""));
+        assert!(!html.contains("tag(\"\", \"requests\""));
+    }
 }

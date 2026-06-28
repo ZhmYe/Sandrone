@@ -8,7 +8,6 @@ pub(crate) fn load_config() -> Result<Config> {
     let mut git_url = String::new();
     let mut base_branch = "main".to_string();
     let mut parallel_limit = 1;
-    let mut auto_merge = false;
 
     for line in content.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -26,7 +25,10 @@ pub(crate) fn load_config() -> Result<Config> {
                     parallel_limit = parsed;
                 }
             }
-            "auto_merge" => auto_merge = parse_config_bool(value).unwrap_or(false),
+            "auto_merge" => {
+                // Legacy key kept harmless for old workspaces. Sandrone now merges automatically
+                // after delivery gates and platform safety checks pass.
+            }
             _ => {}
         }
     }
@@ -37,16 +39,7 @@ pub(crate) fn load_config() -> Result<Config> {
         git_url,
         base_branch,
         parallel_limit,
-        auto_merge,
     })
-}
-
-fn parse_config_bool(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
 }
 
 pub(crate) fn load_requests() -> Result<Vec<Request>> {
@@ -105,6 +98,8 @@ pub(crate) fn save_requests(requests: &[Request]) -> Result<()> {
     }
     fs::write(STATE_PATH, content)?;
     sync_obsidian_project_note(requests)?;
+    refresh_loop_cohort_progress(requests)?;
+    request_loop_wake("requests state saved")?;
     Ok(())
 }
 
@@ -382,7 +377,7 @@ pub(crate) fn write_recovery_doc(request: &Request, stage: &str, reason: &str) -
     fs::write(
         request_artifact_path_buf(request, "recovery.md"),
         format!(
-            "# 恢复指南: {request_id}\n\n## 当前状态\n\n- Stage: `{stage}`\n- Status: `blocked`\n- Reason: {reason}\n\n## 关键路径\n\n- Request: `{request_artifact}`\n- Plan: `{plan_artifact}`\n- Change doc: `{change_doc_artifact}`\n- Agent journal: `{agent_journal_artifact}`\n- Status: `{change_path}/status.json`\n- Plan review summary: `{plan_summary}`\n- Code review summary: `{code_summary}`\n- Worktree: `{worktree}`\n- Branch: `{branch}`\n\n## 推荐恢复步骤\n\n1. 阅读 request、plan、change-doc、agent-journal 和本文件。\n2. 查看最后一轮 review summary 和 details，优先处理 critical/high。\n3. 如果需要继续自动修复，运行 `sandrone tick --request_id {request_id}`。\n4. 如果 reviewer 明显误判，人工审批必须写明 comment 和来源。\n",
+            "# 恢复指南: {request_id}\n\n## 当前状态\n\n- Stage: `{stage}`\n- Status: `blocked`\n- Reason: {reason}\n\n## 关键路径\n\n- Request: `{request_artifact}`\n- Plan: `{plan_artifact}`\n- Change doc: `{change_doc_artifact}`\n- Agent journal: `{agent_journal_artifact}`\n- Status: `{change_path}/status.json`\n- Plan review summary: `{plan_summary}`\n- Code review summary: `{code_summary}`\n- Worktree: `{worktree}`\n- Branch: `{branch}`\n\n## 推荐恢复步骤\n\n1. 阅读 request、plan、change-doc、agent-journal 和本文件。\n2. 查看最后一轮 review summary 和 details，优先处理 critical/high。\n3. 如果需要继续自动修复，运行 `sandrone loop restart --request_id {request_id}`，然后运行 `sandrone loop start`。\n4. 如果 reviewer 明显误判，人工审批必须写明 comment 和来源。\n",
             request_id = request.request_id,
             stage = stage,
             reason = reason,
@@ -628,7 +623,7 @@ pub(crate) fn gate_status_prefix(gate: &str) -> &str {
 pub(crate) fn ensure_change_packet(request: &Request) -> Result<()> {
     if request.change_path.is_empty() {
         return Err(format!(
-            "{} has no change packet. Run sandrone plan first.",
+            "{} has no change packet. Run sandrone loop start first.",
             request.request_id
         )
         .into());

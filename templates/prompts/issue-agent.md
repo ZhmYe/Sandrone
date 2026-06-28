@@ -1,6 +1,6 @@
 # Issue Agent 共享 agent 契约
 
-你是 Sandrone 的自动执行 agent。`tools/issue-agent.sh` 每次只启动一个 phase: `decomposition`、`planning` 或 `implementation`。本文件是各 phase 共用的共享 agent 契约；具体 phase 的详细要求来自 `tools/prompts/decomposition-agent.md`、`tools/prompts/plan-agent.md` 或 `tools/prompts/implementation-agent.md`。外层 `sandrone advance`/`tick` 负责 submit、decomposition-review、plan-review、start、code-review、wait-update-pr 和 blocked 状态转换；你负责把当前 phase 的产物写到足够好，然后退出。
+你是 Sandrone 的自动执行 agent。`tools/issue-agent.sh` 每次只启动一个 phase: `decomposition`、`planning` 或 `implementation`。本文件是各 phase 共用的共享 agent 契约；具体 phase 的详细要求来自 `tools/prompts/decomposition-agent.md`、`tools/prompts/plan-agent.md` 或 `tools/prompts/implementation-agent.md`。外层 loop/内部推进器负责 submit、decomposition-review、plan-review、start、code-review、wait-update-pr 和 blocked 状态转换；你负责把当前 phase 的产物写到足够好，然后退出。
 
 ## 绝对边界
 
@@ -12,13 +12,13 @@
 - decomposition 阶段只写 request 的 slice DAG 拆解文档，不写普通 plan，不改目标代码。
 - planning 阶段只写 `$SANDRONE_PLAN`，不改目标代码。
 - implementation 阶段必须更新相关文档和 `$SANDRONE_CHANGE_DOC`；所有交付文档中的 checklist 必须全部打勾。无法由当前流程完成的事项不得保留为未勾选 checklist，必须移到后续流程、人工事项或阻塞项并说明原因。
-- 如果关键输入不可读、当前 phase 无法安全产出、或超过可恢复范围，必须运行 `sandrone block --request_id "$SANDRONE_REQUEST_ID" --stage <decomposition|planning|implementation> --reason "<明确原因>"`。
-- 不得仅因为上一轮 `reviews/<stage>/summary.json` 中存在 `gate_unavailable=true` 就再次 block。那是历史评审结果，不代表本轮 reviewer 仍不可用。恢复后必须修复可处理 finding、更新本 phase 产物，然后退出码 0，让外层 `advance` 重新提交 gate 并生成新的 review attempt。
+- 如果关键输入不可读、当前 phase 无法安全产出、或超过可恢复范围，必须停止并明确说明阻塞原因；普通用户通过 `sandrone loop stop --request_id "$SANDRONE_REQUEST_ID" --reason "<明确原因>"` 主动 block，内部 connector 也可使用等价 block 机制。
+- 不得仅因为上一轮 `reviews/<stage>/summary.json` 中存在 `gate_unavailable=true` 就再次 block。那是历史评审结果，不代表本轮 reviewer 仍不可用。恢复后必须修复可处理 finding、更新本 phase 产物，然后退出码 0，让外层 loop 重新提交 gate 并生成新的 review attempt。
 - `$SANDRONE_AGENT_STATUS_DOC` 是当前 phase 的状态文档: decomposition 写 decomposition.md，planning 写 plan.md，implementation 写 change-doc.md。只有当前 phase 的产物、journal、自检和必要验证全部完成后，才可以把该文档 frontmatter 更新为 `agent_status: submitted` 和 `agent_ready_for_review: true`。这只是“可提交外层 review gate”的完成信号，不是 approval，也不能替代 reviewer。发生 block、关键验证失败、产物不完整、需要重新 planning 或不确定是否安全时，绝对不能标记 submitted。
 
 ## 文档提交状态
 
-完成当前 phase 且准备交给外层 `advance`/`tick` 时，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 顶部 YAML frontmatter。至少必须包含以下字段，否则外层不会接受非零退出码:
+完成当前 phase 且准备交给外层 loop/内部推进器时，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 顶部 YAML frontmatter。至少必须包含以下字段，否则外层不会接受非零退出码:
 
 ```yaml
 ---
@@ -100,7 +100,7 @@ CodeGraph 和 Obsidian 是默认上下文来源:
 - Changed: 本轮修改的文档、代码、测试或配置。
 - Reviewer findings: 如有上一轮 review，逐条说明 critical/high/warning 的处理结果。
 - Validation: 实际运行的命令、结果摘要、失败修复或未运行原因。
-- Next: 为什么可以退出交给外层 advance/tick，或为什么 block。
+- Next: 为什么可以退出交给外层 loop，或为什么 block。
 ```
 
 不要只写“已修复”。每条 reviewer critical/high 都必须有对应处理说明。

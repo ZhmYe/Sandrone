@@ -24,21 +24,29 @@
 | `sdr status` | 输出 workspace 基本信息和状态计数。 |
 | `sdr status REQ-0001` | 输出单个 request 的来源、状态、文档路径、分支和 worktree。 |
 | `sdr doc-status --request_id REQ-0001` | 读取当前阶段文档 frontmatter，快速查看文档提交状态、format-check 摘要和 gate 状态。 |
-| `sdr doc-status --request_id REQ-0001 --phase implementation` | 指定读取 decomposition、planning、implementation 或 rebase 阶段文档状态。 |
+| `sdr doc-status --request_id REQ-0001 --phase implementation` | 指定读取 decomposition、planning 或 implementation 阶段文档状态；rebase 是旧 workspace 兼容 phase。 |
 | `sdr sessions` | 列出 session registry。 |
 | `sdr sessions --json` | JSON 输出 session registry。 |
 | `sdr session --request_id REQ-0001 --phase planning --thread_id <id>` | 手动登记可见会话信息。 |
 
-## 自动推进
+## 公开入口
 
 | 命令 | 作用 |
 | --- | --- |
-| `sdr tick` | 扫描全部 request，刷新已结束 agent/reviewer 状态，在并发上限内派发下一步 agent 或收敛 review。 |
+| `sandrone loop start --interval-seconds 900` | 后台周期运行自动化 loop。 |
+| `sandrone loop restart [--request_id REQ-0001]` | 从 blocked 恢复；不指定 request 时恢复所有 blocked request，之后用 `loop start` 继续自动化。 |
+| `sandrone loop stop [--force]` | 请求停止 loop worker；默认软停止，`--force` 只终止 loop worker，不强杀正在运行的 agent/reviewer。 |
+| `sandrone loop stop --request_id REQ-0001 --reason "<reason>"` | 主动把一个 request 标记为 blocked。 |
+| `sandrone dashboard` | 启动本地监控页面。 |
+
+## Advanced/Internal
+
+下面命令主要给 hook、connector、测试和故障恢复使用。普通使用应优先走 `sandrone loop start/restart/stop` 和 `sandrone dashboard`。
+
+| 命令 | 作用 |
+| --- | --- |
+| `sdr tick` | loop worker 内部单轮入口：扫描全部 request，刷新已结束 agent/reviewer 状态，在并发上限内派发下一步 agent 或收敛 review。 |
 | `sdr tick --request_id REQ-0001` | 只处理一个 request。 |
-| `sdr tick --parallel-limit 2` | 单次覆盖并发上限。 |
-| `sdr tick --max-attempts 20` | 单次覆盖 review 最大修复轮数。 |
-| `sdr tick --auto-merge` | 单次开启 merge scheduler；先生成 merge plan，再每轮最多合并一个 `wait-finish` request。 |
-| `sdr tick --no-auto-merge` | 单次关闭 merge scheduler，覆盖 config/env。 |
 | `sdr advance --request_id REQ-0001` | 推进单个 request；通常由 agent 或 review worker hook 自动调用。 |
 
 ## 手动门禁
@@ -56,7 +64,7 @@
 | `sdr start --request_id REQ-0001` | 在 plan gate 有效后创建 worktree 和分支。 |
 | `sdr submit --request_id REQ-0001 --gate change-doc` | 提交 change-doc gate。 |
 | `sdr code-review --request_id REQ-0001` | 同步运行格式检查；通过后派发 TestReviewer 和 DesignReviewer worker 并返回。 |
-| `sdr integration-review --request_id REQ-0001` | 派发 PR refresh 后的轻量 IntegrationReviewer worker 并返回。 |
+| `sdr integration-review --request_id REQ-0001` | 旧 workspace 兼容入口；新流程使用 `pr-status` 退回 implementation/code-review。 |
 | `sdr gates --request_id REQ-0001` | 查看 gate 状态；状态来自对应阶段 Markdown frontmatter，`approvals` 是兼容别名。 |
 | `sdr gates --request_id REQ-0001 --json` | JSON 查看 gate 状态，便于机器人读取。 |
 | `sdr approve --request_id REQ-0001 --gate plan --by <actor>` | 人工批准 gate。 |
@@ -70,8 +78,8 @@
 | `sdr resume --request_id REQ-0001` | 从 blocked 恢复到可派发状态；gate 不可用会重跑 reviewer，代码/文档问题会回到 agent 修复。 |
 | `sdr finish --request_id REQ-0001 --message "feat: ..."` | 校验 gate，commit、push 分支并调用 PR connector。 |
 | `sdr pr-status --request_id REQ-0001` | 调用 PR 状态脚本；只有 `merged` 才标记 finished。 |
-| `sdr pr-merge --request_id REQ-0001 --auto-merge` | 可选自动合并执行器；只有 `merge-plan=ready_for_merge` 且 `pr-status=safe` 时才调用 merge connector。 |
-| `sdr pr-refresh --request_id REQ-0001` | 同步 base/master、rebase、处理冲突并派发/收敛 IntegrationReviewer。 |
+| `sdr pr-merge --request_id REQ-0001` | 自动合并执行器；通常由 loop 调用，只有 `pr-status=safe` 且 `change-doc` gate 有效时才调用 merge connector。 |
+| `sdr pr-refresh --request_id REQ-0001` | 旧 workspace 兼容入口；新流程会把 PR 状态问题退回 implementation，由下一轮 loop 处理。 |
 
 ## Dashboard
 

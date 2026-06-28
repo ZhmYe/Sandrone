@@ -134,7 +134,7 @@ Finding 格式:
   "recommended_next_phase": "blocked",
   "summary": "plan gate 不可验证，无法审查实现是否遵循计划。",
   "process": ["尝试读取 plan.md frontmatter 中的 plan gate", "尝试读取 worktree diff"],
-  "critical": [{"title": "plan gate 不可读取", "evidence": "plan.md frontmatter 中缺少 gate_name/gate_status/gate_body_sha256，状态不可读或文档正文 hash 无法验证", "impact": "无法证明实现依据的是已批准计划，继续 code-review 会破坏审批门禁", "required_fix": "重新提交并通过 plan-review 后再运行 code-review", "suggested_change": "运行 sandrone submit --gate plan 并通过 plan-review，确认 plan.md frontmatter 中 gate_status=approved 且 gate_body_sha256 匹配当前正文。", "verification": "再次运行 code-review，确认 DesignReviewer 能验证 plan gate。"}],
+  "critical": [{"title": "plan gate 不可读取", "evidence": "plan.md frontmatter 中缺少 gate_name/gate_status/gate_body_sha256，状态不可读或文档正文 hash 无法验证", "impact": "无法证明实现依据的是已批准计划，继续 code-review 会破坏审批门禁", "required_fix": "由外层 loop 重新提交并通过 plan-review 后再进入 code-review", "suggested_change": "恢复 request 后让 loop 重新收敛 plan gate，确认 plan.md frontmatter 中 gate_status=approved 且 gate_body_sha256 匹配当前正文。", "verification": "再次运行 code-review，确认 DesignReviewer 能验证 plan gate。"}],
   "high": [],
   "warning": [],
   "info": []

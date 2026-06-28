@@ -25,6 +25,17 @@ pub(crate) fn now_string() -> String {
         .to_string()
 }
 
+pub(crate) fn process_is_running(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 pub(crate) fn fallback_empty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     if value.trim().is_empty() {
         fallback

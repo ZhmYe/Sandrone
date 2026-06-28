@@ -128,7 +128,7 @@ Finding 格式:
   "recommended_next_phase": "blocked",
   "summary": "关键输入不可读，无法可靠评审计划。",
   "process": ["尝试读取 request.md", "尝试读取 plan.md"],
-  "critical": [{"title": "plan.md 不可读取", "evidence": "artifact-index 中的 Plan 路径不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或重新运行 sandrone plan 后再评审", "suggested_change": "确认 obsidian/changes/<change-name>/<request_id> plan.md 存在且可读；缺失时重新运行 sandrone plan。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 Plan 路径。"}],
+  "critical": [{"title": "plan.md 不可读取", "evidence": "artifact-index 中的 Plan 路径不存在或不可读", "impact": "reviewer 无法判断计划是否满足需求，继续推进会绕过计划门禁", "required_fix": "修复 change packet 或让外层 loop 重新生成计划后再评审", "suggested_change": "确认 obsidian/changes/<change-name>/<request_id> plan.md 存在且可读；缺失时恢复 request 后由 loop 重新派发 PlanAgent。", "verification": "重新运行 plan-review，确认 gate_unavailable=false 且 process 包含读取 Plan 路径。"}],
   "high": [],
   "warning": [],
   "info": []

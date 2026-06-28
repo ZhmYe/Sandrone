@@ -19,7 +19,7 @@
     "approved": { "type": "boolean" },
     "gate_unavailable": { "type": "boolean" },
     "decision": { "type": "string", "enum": ["approved", "rejected"] },
-    "recommended_next_phase": { "type": "string", "enum": ["planning", "implementation", "blocked"] },
+    "recommended_next_phase": { "type": "string", "enum": ["planning", "implementation", "delivery", "blocked"] },
     "summary": { "type": "string" },
     "process": { "type": "array", "items": { "type": "string" } },
     "critical": { "type": "array", "items": { "$ref": "#/$defs/finding" } },

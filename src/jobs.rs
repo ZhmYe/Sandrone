@@ -112,12 +112,13 @@ fn agent_runtime_kinds() -> &'static [&'static str] {
         "plan-agent",
         "implementation-agent",
         "rebase-agent",
+        "request-schedule-agent",
         "decomposition-reviewer",
         "plan-reviewer",
         "test-reviewer",
         "design-reviewer",
         "integration-reviewer",
-        "merge-planner",
+        "request-schedule-reviewer",
     ]
 }
 

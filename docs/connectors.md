@@ -28,7 +28,6 @@ external_id<TAB>source<TAB>title<TAB>body<TAB>url
 - `tools/prompts/decomposition-agent.md`：拆解阶段提示词。
 - `tools/prompts/plan-agent.md`：计划阶段提示词。
 - `tools/prompts/implementation-agent.md`：实现阶段提示词。
-- `tools/prompts/rebase-agent.md`：PR refresh 冲突阶段提示词。
 
 常见 phase：
 
@@ -36,12 +35,11 @@ external_id<TAB>source<TAB>title<TAB>body<TAB>url
 | --- | --- | --- |
 | `decomposition` | 写 `<REQ> decomposition.md`、`decomposition.json`、`dag.json`、Obsidian 导航和 agent journal。 | 改目标代码、跑 review、approve、commit、push。 |
 | `planning` | 写 `<REQ-SNN> plan.md` 和 agent journal。 | 改目标代码、跑 review、start、commit、push。 |
-| `implementation` | 在 `dev/worktrees/<REQ-SNN>` 写代码，更新 `<REQ-SNN> change-doc.md` 和 agent journal。 | 改 `dev/repo`、跑 reviewer gate、approve、commit、push。 |
-| `rebase` | 解决 rebase/集成冲突，保留 base/master 新代码和已通过实现语义。 | 扩大需求、commit、push、finish、merge。 |
+| `implementation` | 在 `dev/worktrees/<REQ-SNN>` 写代码，更新 `<REQ-SNN> change-doc.md` 和 agent journal；如果 PR 状态门禁退回，也在这里处理 base/master drift、PR outdated、冲突或平台检查失败。 | 改 `dev/repo`、跑 reviewer gate、approve、commit、push、merge。 |
 
 agent 必须在退出前自检 reviewer 会检查的内容。明显会产生 critical/high 的问题，应先修复或 block，不要浪费 review 轮次。
 
-agent 成功完成当前 phase 后，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 的 YAML frontmatter。状态头必须包含 `request_id`、当前 `agent_phase`、`agent_status: submitted` 和 `agent_ready_for_review: true`。implementation/rebase 还应写入简洁的 `format_check_status` 和 `format_check_exit_code`。Codex CLI 可能因为本轮早期工具命令失败而最终返回非零；外层 `advance` 只有在非零退出且文档提交状态有效时才会继续提交 review gate。没有有效文档状态、状态不匹配或产物不完整时必须 block。这个状态头不是 approval，也不能替代 reviewer。
+agent 成功完成当前 phase 后，最后更新 `$SANDRONE_AGENT_STATUS_DOC` 的 YAML frontmatter。状态头必须包含 `request_id`、当前 `agent_phase`、`agent_status: submitted` 和 `agent_ready_for_review: true`。implementation 还应写入简洁的 `format_check_status` 和 `format_check_exit_code`。Codex CLI 可能因为本轮早期工具命令失败而最终返回非零；外层 loop/内部推进器只有在非零退出且文档提交状态有效时才会继续提交 review gate。没有有效文档状态、状态不匹配或产物不完整时必须 block。这个状态头不是 approval，也不能替代 reviewer。
 
 同一 phase 被 reviewer 打回后，默认 `codex-cli`/`codex-api` connector 会尽量用 `codex exec resume` 复用上一轮 agent session。wrapper 会从 stdout/stderr 中提取 `session id` 并写入 `.sandrone/state/agents/<REQ>.<phase>.session`；下一轮只在状态为对应 `*-review-rejected` 时读取它。复用 session 只是节省上下文和保留已形成判断，本轮 prompt、最新 reviewer finding、当前文件和外层 gate 仍是权威。
 
@@ -90,11 +88,11 @@ tools/check-format.sh --check
 - `tools/plan-review.sh`
 - `tools/test-review.sh`
 - `tools/design-review.sh`
-- `tools/integration-review.sh`
+- `tools/integration-review.sh`：旧 workspace 兼容；新流程使用 PR 状态门禁退回 implementation/code-review。
 
 stdout 必须是符合 `tools/schemas/review-result.schema.json` 的 JSON 对象。非法 JSON、空输出、schema 不匹配或脚本失败都会成为 blocking review。
 
-reviewer 命令是异步的：`sdr plan-review`、`sdr code-review`、`sdr integration-review` 只负责创建 attempt、派发 worker 并返回；worker 完成后通过 hook 调用 `advance` 收敛。后台状态和日志在 `agents/<reviewer>/runs/<timestamp-REQ-stage-attempt>/`，包含 pid、exit、stdout/stderr、hook、events、runtime 元数据和中间 artifacts；`.sandrone/state/jobs` / `.sandrone/state/reviews` 仅作兼容兜底。最终结构化结果仍可由 dashboard 展示，canonical run 里也会保留 `artifacts/result.json`。
+reviewer gate 是异步的：loop 或内部推进器只负责创建 attempt、派发 worker 并返回；worker 完成后通过 hook 或下一轮 loop 收敛。后台状态和日志在 `agents/<reviewer>/runs/<timestamp-REQ-stage-attempt>/`，包含 pid、exit、stdout/stderr、hook、events、runtime 元数据和中间 artifacts；`.sandrone/state/jobs` / `.sandrone/state/reviews` 仅作兼容兜底。最终结构化结果仍可由 dashboard 展示，canonical run 里也会保留 `artifacts/result.json`。
 
 每个 reviewer 的 `SANDRONE_REVIEW_CONTEXT` 是轻量索引目录，位于对应 reviewer run 的 `artifacts/review-context/`，不复制完整 plan、change-doc 或 Obsidian 长文档。框架会自动生成：
 
@@ -111,7 +109,7 @@ reviewer 命令是异步的：`sdr plan-review`、`sdr code-review`、`sdr integ
 - `SANDRONE_REVIEW_BACKEND=codex-api`：调用 Codex CLI，并让 Codex 使用 `LLM_API_KEY`、`LLM_BASE_URL` 和当前 reviewer 模型；仍然保留 `--output-schema` 结构化输出。
 - `SANDRONE_REVIEW_BACKEND=claude-code`：保留值，默认脚本暂未实现；若设置会返回 `gate_unavailable=true`。
 
-可以按 reviewer 类型覆盖 backend：`SANDRONE_DECOMPOSITION_REVIEWER_BACKEND`、`SANDRONE_PLAN_REVIEWER_BACKEND`、`SANDRONE_TEST_REVIEWER_BACKEND`、`SANDRONE_DESIGN_REVIEWER_BACKEND`、`SANDRONE_INTEGRATION_REVIEWER_BACKEND`。
+可以按 reviewer 类型覆盖 backend：`SANDRONE_DECOMPOSITION_REVIEWER_BACKEND`、`SANDRONE_PLAN_REVIEWER_BACKEND`、`SANDRONE_TEST_REVIEWER_BACKEND`、`SANDRONE_DESIGN_REVIEWER_BACKEND`。`SANDRONE_INTEGRATION_REVIEWER_BACKEND` 仅用于旧 workspace 兼容。
 
 backend 解析优先级：shell 环境变量中的阶段/类型专用 backend -> shell 通用 backend -> `agents/config/<kind>.json` 的 `agent_backend` -> workspace `.env` -> 默认 `codex-cli`。
 
@@ -123,7 +121,7 @@ backend 解析优先级：shell 环境变量中的阶段/类型专用 backend ->
 - `SANDRONE_CODEX_PROVIDER_NAME`：`codex-api` 的 provider 显示名，默认 `Sandrone API`。
 - `SANDRONE_CODEX_WIRE_API`：`codex-api` 的 Codex wire API，默认 `responses`。
 - `SANDRONE_CODEX_MODEL_CATALOG_JSON`：可选，指向 Codex `model_catalog_json` 文件；未设置时脚本优先使用 `$CODEX_HOME/models_cache.json` 或 `$HOME/.codex/models_cache.json`，否则用 `codex debug models --bundled` 生成临时 catalog。默认 `codex-cli` 和 `codex-api` 都会设置这个值，避免 Codex 启动时现场刷新模型列表，也避免第三方 `/models` 返回格式不兼容导致 Codex 启动失败。
-- `SANDRONE_REVIEW_TIMEOUT_SECONDS`：reviewer 子进程超时，默认 `1800`。超时会被转换成 `gate_unavailable=true` 的 blocking review，避免后台 worker 无限运行；`advance`/`tick` 收敛时会把它标记为 blocked。
+- `SANDRONE_REVIEW_TIMEOUT_SECONDS`：reviewer 子进程超时，默认 `1800`。超时会被转换成 `gate_unavailable=true` 的 blocking review，避免后台 worker 无限运行；loop 收敛时会把它标记为 blocked。
 - `SANDRONE_*_REVIEWER_MODEL`、`SANDRONE_REVIEWER_MODEL` 或 `SANDRONE_MODEL`：选择 reviewer 模型。
 
 API key 只能放在本地未提交的 `agents/config/<kind>.json`、`.env` 或 shell 环境中，不要写入文档、review detail 或目标仓库。
@@ -163,6 +161,56 @@ API key 只能放在本地未提交的 `agents/config/<kind>.json`、`.env` 或 
 - reviewer 必须返回 `recommended_next_phase`：`planning`、`implementation` 或 `blocked`。
 - TestReviewer 与 DesignReviewer 必须独立评审，不读取对方输出、历史 review detail、summary 或 agent journal。
 
+## Request Schedule 脚本
+
+### `tools/request-schedule-agent.sh`
+
+每个 loop/tick pass 会在扣除已运行 worker 后，把候选 request/slice 写成 queue，再调用此脚本选择本轮最多 `parallel_limit` 个可以并行推进的 request。它只决定调度顺序，不审代码质量，不修改状态，不创建 worktree，不运行 review。
+
+输入环境变量：
+
+- `SANDRONE_REQUEST_SCHEDULE_QUEUE`: TSV 队列快照，canonical 路径位于 `agents/request-schedule-agent/runs/**/artifacts/request-schedule-queue.tsv`。
+- `SANDRONE_REQUEST_SCHEDULE_MD`: 人类可读调度摘要，默认 `obsidian/schedule/request-schedule.md`。
+- `SANDRONE_REQUEST_SCHEDULE_JSON`: 机器可读调度计划，canonical 路径位于 `agents/request-schedule-agent/runs/**/artifacts/request-schedule.json`。
+- `SANDRONE_REQUEST_SCHEDULE_MAX_PARALLEL`: 本轮最大可选数量。
+- `SANDRONE_SCHEDULER_DECISION_ID`: 当前调度运行 ID。
+
+`SANDRONE_REQUEST_SCHEDULE_QUEUE` 的 header:
+
+```text
+request_id<TAB>title<TAB>status<TAB>source<TAB>updated_at<TAB>change_path<TAB>branch<TAB>detail
+```
+
+成功 stdout 是零行或多行 TSV:
+
+```text
+selected<TAB>request_id<TAB>reason
+defer<TAB>request_id-or-empty<TAB>reason
+blocked<TAB>request_id-or-empty<TAB>reason
+```
+
+要求：
+
+- 每次最多输出 `SANDRONE_REQUEST_SCHEDULE_MAX_PARALLEL` 个 `selected`。
+- 只能选择 queue 中存在的 request id。
+- `defer` 表示本轮没有合适 request；`blocked` 表示调度策略自身不可判断。
+- 不读取完整代码；需要更多信息时优先读 request index、slice DAG、状态和轻量 Obsidian 摘要。
+
+### `tools/request-schedule-review.sh`
+
+RequestScheduleReviewer 审核本轮并行选择是否在 queue 内、是否超过并行上限、是否明显违反 slice 依赖或调度边界。它不审实现质量；实现质量仍由 plan/code reviewer gate 负责。
+
+输入环境变量：
+
+- `SANDRONE_REQUEST_SCHEDULE_QUEUE`
+- `SANDRONE_REQUEST_SCHEDULE_OUTPUT`
+- `SANDRONE_REQUEST_SCHEDULE_MD`
+- `SANDRONE_REQUEST_SCHEDULE_JSON`
+- `SANDRONE_REQUEST_SCHEDULE_MAX_PARALLEL`
+- `SANDRONE_REVIEW_SCHEMA`
+
+stdout 必须符合 `tools/schemas/review-result.schema.json`。任意 `critical/high` finding、`gate_unavailable=true` 或非法 JSON 都会导致本轮不派发新 request。canonical 运行产物位于 `agents/request-schedule-reviewer/runs/**/artifacts/request-schedule-review.json`，兼容副本位于 `.sandrone/state/scheduler/request-schedule-review.json`。
+
 ## PR 脚本
 
 ### `tools/pr-create.sh`
@@ -195,7 +243,7 @@ status<TAB>url<TAB>detail
 
 交付观察状态推荐值：`open`、`missing`、`merged`、`closed`、`unknown`。只有 `merged` 才能把 request 标记为 `finished`。
 
-如果要让 `sdr pr-merge` 自动合并，`pr-status` 还必须作为合并安全探测脚本返回：
+如果要让 loop 自动合并，`pr-status` 还必须作为合并安全探测脚本返回：
 
 - `safe`：PR 仍匹配 base/head，平台检查通过，分支未过期，没有冲突或策略阻塞，可以进入合并连接器。
 - `unsafe`：发现冲突、过期、检查失败、必需评审未完成或其他不可合并原因。
@@ -203,45 +251,10 @@ status<TAB>url<TAB>detail
 
 旧状态 `open` 不会被当成 `safe`。这能避免普通“PR 打开中”被误判为“可以自动合并”。
 
-### `tools/merge-plan.sh`
-
-全局合并队列规划 connector。它只决定“本轮优先合并哪个 PR”，不审计 PR 代码质量；实现质量已经由 `code-review` gate 负责。
-
-输入环境变量：
-
-- `SANDRONE_MERGE_QUEUE`: 当前 tick 生成的 TSV 队列快照，canonical 路径位于 `agents/merge-planner/runs/**/artifacts/merge-queue.tsv`。
-- `SANDRONE_MERGE_PLAN_MD`: 人类可读计划路径，默认 `obsidian/merge/merge-plan.md`。
-- `SANDRONE_MERGE_PLAN_JSON`: 机器可读计划路径，canonical 路径位于 `agents/merge-planner/runs/**/artifacts/merge-plan.json`。
-- `SANDRONE_AUTO_MERGE_ENABLED`: 是否显式开启自动合并。
-
-`SANDRONE_MERGE_QUEUE` 的 header:
-
-```text
-request_id<TAB>title<TAB>branch<TAB>updated_at<TAB>pr_status<TAB>pr_url<TAB>pr_detail<TAB>change_path
-```
-
-成功 stdout 必须是一行 TSV:
-
-```text
-ready_for_merge<TAB>request_id<TAB>reason
-defer<TAB>request_id-or-empty<TAB>reason
-blocked<TAB>request_id-or-empty<TAB>reason
-```
-
-要求：
-
-- 每次最多选择一个 request。
-- 只有队列中 `pr_status` 为 `safe` 或 `merged` 的 request 才能返回 `ready_for_merge`。
-- 不能执行 merge、push、rebase、commit 或修改 request 状态。
-- 不默认读取完整代码；如果替换成 LLM planner，应优先读取队列、PR 描述、change-doc、最终 review summary 和轻量 diff/stat。
-- 返回 `defer` 表示当前没有可合并 PR；返回 `blocked` 表示队列策略本身不可安全判断。
-
 ### `tools/pr-merge.sh`
 
-显式自动合并 connector。只有同时满足以下条件时，Sandrone 才会调用它：
+自动合并 connector。只有同时满足以下条件时，Sandrone 才会调用它：
 
-- `auto_merge` 开关已显式开启，例如 `--auto-merge`、`.sandrone/config.toml` 或 `SANDRONE_AUTO_MERGE=1`。
-- `tools/merge-plan.sh` 返回 `ready_for_merge<TAB>request_id<TAB>reason`。
 - `tools/pr-status.sh` 返回 `safe<TAB>url<TAB>detail`。
 - `change-doc` gate 已通过。
 
@@ -252,7 +265,7 @@ merged<TAB>url<TAB>detail
 blocked<TAB>url<TAB>detail
 ```
 
-只有 `merged` 会标记 finished，`blocked` 不会标记 finished。connector 必须在执行前重新确认 PR 仍匹配 base/head；如果平台不能保证安全合并，应返回 `blocked` 或非零失败，而不是强行 merge。每次判断都会写入 `.sandrone/state/scheduler/decisions/*.json`，便于后续前端和机器人审计。
+只有 `merged` 会标记 finished，`blocked` 不会标记 finished。connector 必须在执行前重新确认 PR 仍匹配 base/head；如果平台不能保证安全合并，应返回 `blocked` 或非零失败，而不是强行 merge。loop 每轮最多处理一个 `wait-finish` request，保证 PR 合并串行。每次判断都会写入 `.sandrone/state/scheduler/decisions/*.json`，便于后续前端和机器人审计。
 
 ## PR Body
 

@@ -70,13 +70,13 @@ Plan Review 折叠在 Plan 阶段的 `Review 结果` tab；Code Review 折叠在
 PR Delivery
 ```
 
-如果存在 PR refresh、rebase 冲突或 Integration Review 记录，`PR` tab 会追加展示：
+如果 `pr-status` 曾返回 `unsafe`，`PR` tab 会展示 PR 状态门禁记录：
 
 ```text
-PR Delivery -> PR Refresh -> Integration Review
+PR Delivery -> PR Status
 ```
 
-Integration Review 通过后，状态回到 `wait-update-pr`，表示需要再次运行 `finish` 推送 rebase 后的分支。
+PR 状态门禁不会替代 code-review。`unsafe` 会把对应 request/slice 退回 implementation；修复后仍需重新通过 format/check 与 code-review，再回到 `wait-update-pr` 更新 PR。
 
 ## Artifact 渲染
 
@@ -91,7 +91,6 @@ Review detail 读取不可变文件：
 reviews/decomposition-review/details/*.json
 reviews/plan-review/details/*.json
 reviews/code-review/details/*.json
-reviews/integration-review/details/*.json
 ```
 
 多轮 review 按 `001-*`、`002-*` 分组展示。`summary.json` 只代表最新汇总，可能被覆盖，因此不作为详情展示的唯一来源。

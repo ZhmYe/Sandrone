@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "CLI-first workflow for turning work items into plans, isolated worktrees, change docs, and PR-ready branches."
 
+[dependencies]
+notify = "8.0"
+
 [[bin]]
 name = "sandrone"
 path = "src/main.rs"

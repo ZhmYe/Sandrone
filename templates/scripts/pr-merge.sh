@@ -19,14 +19,11 @@ set -eu
 # SANDRONE_PR_STATUS_URL
 # SANDRONE_PR_STATUS_DETAIL
 # SANDRONE_PR_STATUS_RAW
-# SANDRONE_QUEUE_DECISION
-# SANDRONE_AUTO_MERGE_ENABLED
 # SANDRONE_SCHEDULER_DECISION_ID
 #
 # Connector contract:
-# - This script is invoked only after Sandrone's scheduler decided the request is
-#   ready for merge and pr-status reported a safe merge state.
-# - This script must not decide request priority or merge order.
+# - This script is invoked only after pr-status reported a safe merge state.
+# - This script must not decide request priority or implementation order.
 # - This script must re-check that the target PR still matches base/head.
 # - If the platform cannot guarantee a safe merge, print blocked<TAB>url<TAB>detail
 #   and exit 0.
@@ -36,16 +33,6 @@ set -eu
 # - Exit non-zero only when the connector itself failed unexpectedly.
 
 cd "${SANDRONE_WORKTREE}"
-
-if [ "${SANDRONE_AUTO_MERGE_ENABLED:-false}" != "true" ]; then
-  printf 'blocked\t%s\tauto merge is disabled\n' "${SANDRONE_PR_STATUS_URL:-${SANDRONE_PR_COMPARE_URL:-}}"
-  exit 0
-fi
-
-if [ "${SANDRONE_QUEUE_DECISION:-}" != "ready_for_merge" ]; then
-  printf 'blocked\t%s\tqueue decision is not ready_for_merge\n' "${SANDRONE_PR_STATUS_URL:-${SANDRONE_PR_COMPARE_URL:-}}"
-  exit 0
-fi
 
 if [ "${SANDRONE_PR_STATUS:-}" != "safe" ]; then
   printf 'blocked\t%s\tpr-status did not report safe\n' "${SANDRONE_PR_STATUS_URL:-${SANDRONE_PR_COMPARE_URL:-}}"

@@ -54,7 +54,7 @@ updated_at: {{updated_at}}
 - 每个 slice 依次经历：`plan -> plan-review -> implementation -> code-review`
 - Slice code-review 通过后进入 `slice-finished`，再调度 DAG 中可执行后续 slice
 - 全部 slice 完成后进入 `wait-update-pr`，进入 PR 创建/更新环节
-- 如发生 PR 冲突，走 `pr-refresh -> RebaseAgent -> IntegrationReviewer` 流程
+- 如 PR 状态门禁发现过期、冲突或不可安全合并，退回对应 slice/request 的 implementation 阶段处理，重新通过 code-review 后再交付 PR
 
 ## DecompositionReviewer 提交前清单
 

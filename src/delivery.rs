@@ -68,74 +68,11 @@ pub(crate) fn deliver_finished_request(
 
 pub(crate) fn pr_merge_request(args: &[String]) -> Result<()> {
     ensure_initialized()?;
-    ensure_allowed_flags(
-        args,
-        &[
-            "--request_id",
-            "--request-id",
-            "--queue-decision",
-            "--auto-merge",
-        ],
-    )?;
+    ensure_allowed_flags(args, &["--request_id", "--request-id"])?;
     let request_id = required_request_id(args)?;
-    let queue_decision =
-        flag_value(args, "--queue-decision")?.unwrap_or_else(|| "ready_for_merge".to_string());
-    let auto_merge_enabled = flag_present(args, "--auto-merge");
-    let outcome = run_pr_merge_gate(&request_id, &queue_decision, auto_merge_enabled)?;
+    let outcome = run_pr_merge_gate(&request_id)?;
     print_pr_merge_outcome(&outcome);
     Ok(())
-}
-
-pub(crate) fn run_pr_merge_scheduler_from_tick(
-    request_filter: Option<&str>,
-    auto_merge_enabled: bool,
-) -> Result<bool> {
-    if !auto_merge_enabled {
-        return Ok(false);
-    }
-    let Some(plan) = plan_merge_queue_from_tick(request_filter, auto_merge_enabled)? else {
-        return Ok(false);
-    };
-    println!("Tick merge planner: {}", plan.queue_decision);
-    println!("  selected: {}", fallback_empty(&plan.request_id, "none"));
-    println!("  reason: {}", plan.reason);
-    println!("  plan: {}", plan.plan_md_path.display());
-    println!("  queue: {}", plan.queue_path.display());
-
-    if plan.queue_decision != "ready_for_merge" {
-        append_event(
-            "merge_plan_deferred",
-            fallback_empty(&plan.request_id, ""),
-            "delivery",
-            &plan.queue_decision,
-            &format!(
-                "plan={}; reason={}",
-                plan.plan_md_path.display(),
-                plan.reason
-            ),
-        )?;
-        return Ok(true);
-    }
-    let Some(_lock) = RequestLock::acquire(&plan.request_id)? else {
-        println!(
-            "Tick merge scheduler skipped for {}: request lock is already held.",
-            plan.request_id
-        );
-        return Ok(false);
-    };
-    let outcome = run_pr_merge_gate(&plan.request_id, &plan.queue_decision, true)?;
-    println!(
-        "Tick merge scheduler checked {}: {}",
-        outcome.request_id, outcome.action
-    );
-    println!("  reason: {}", outcome.reason);
-    println!("  pr-status: {}", outcome.pr_status_raw);
-    if let Some(merge_raw) = &outcome.merge_raw {
-        println!("  pr-merge: {merge_raw}");
-    }
-    println!("  decision: {}", outcome.decision_path);
-    println!("  request status: {}", outcome.request_status);
-    Ok(true)
 }
 
 struct PrMergeOutcome {
@@ -148,17 +85,203 @@ struct PrMergeOutcome {
     request_status: String,
 }
 
-fn run_pr_merge_gate(
-    request_id: &str,
-    queue_decision: &str,
-    auto_merge_enabled: bool,
-) -> Result<PrMergeOutcome> {
+pub(crate) fn run_delivery_sweep_from_tick(
+    request_filter: Option<&str>,
+    cohort: Option<&LoopCohort>,
+) -> Result<bool> {
+    let requests = load_requests()?;
+    let matches_filter = |request: &Request| {
+        request_filter
+            .map(|filter| request.request_id == filter)
+            .unwrap_or(true)
+            && cohort
+                .map(|cohort| request_belongs_to_cohort(request, cohort))
+                .unwrap_or(true)
+    };
+    if let Some(request) = requests.iter().find(|request| {
+        matches_filter(request) && canonical_status(&request.status) == STATUS_WAIT_UPDATE_PR
+    }) {
+        let Some(_lock) = RequestLock::acquire(&request.request_id)? else {
+            println!(
+                "Tick delivery sweep skipped for {}: request lock is already held.",
+                request.request_id
+            );
+            return Ok(false);
+        };
+        match run_pr_delivery_for_request(&request.request_id) {
+            Ok(delivery) => {
+                print_delivery_result(&delivery);
+                if delivery.request_status == STATUS_WAIT_FINISH {
+                    match run_pr_merge_gate(&delivery.request_id) {
+                        Ok(outcome) => print_pr_merge_outcome(&outcome),
+                        Err(error) => record_pr_merge_error(&delivery.request_id, error)?,
+                    }
+                }
+            }
+            Err(error) => record_pr_delivery_error(&request.request_id, error)?,
+        }
+        return Ok(true);
+    }
+    if let Some(request) = requests.iter().find(|request| {
+        matches_filter(request) && canonical_status(&request.status) == STATUS_WAIT_FINISH
+    }) {
+        let Some(_lock) = RequestLock::acquire(&request.request_id)? else {
+            println!(
+                "Tick PR merge skipped for {}: request lock is already held.",
+                request.request_id
+            );
+            return Ok(false);
+        };
+        match run_pr_merge_gate(&request.request_id) {
+            Ok(outcome) => print_pr_merge_outcome(&outcome),
+            Err(error) => record_pr_merge_error(&request.request_id, error)?,
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+struct DeliverySweepResult {
+    request_id: String,
+    request_status: String,
+    delivery: DeliveryResult,
+}
+
+fn run_pr_delivery_for_request(request_id: &str) -> Result<DeliverySweepResult> {
     let mut requests = load_requests()?;
     let index = find_request_index(&requests, request_id)
         .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
     let mut request = requests[index].clone();
+    ensure_pr_delivery_ready(&request)?;
+    let delivery_request = request_with_delivery_location(&request)?;
+    let commit_message = default_commit_message(&request);
+    validate_commit_message(&commit_message)?;
+    let delivery = deliver_finished_request(&delivery_request, &commit_message)?;
+    let next_status = if delivery.pr_url.is_some() {
+        STATUS_WAIT_FINISH
+    } else {
+        STATUS_WAIT_UPDATE_PR
+    };
+    request.status = next_status.to_string();
+    request.branch = delivery_request.branch.clone();
+    request.worktree_path = delivery_request.worktree_path.clone();
+    request.updated_at = now_string();
+    requests[index] = request.clone();
+    save_requests(&requests)?;
+    write_status_json(
+        &request,
+        "delivery",
+        next_status,
+        if delivery.pr_url.is_some() {
+            "PR created or reused; attempting automatic merge"
+        } else {
+            "PR creation failed or skipped; waiting for PR creation/update retry"
+        },
+    )?;
+    append_event(
+        "pr_delivery",
+        &request.request_id,
+        "delivery",
+        next_status,
+        if delivery.pr_url.is_some() {
+            "PR created or reused; automatic merge check follows"
+        } else {
+            "PR creation failed or skipped"
+        },
+    )?;
+    upsert_session_for_request(&request, "implementation", next_status)?;
+    Ok(DeliverySweepResult {
+        request_id: request.request_id,
+        request_status: next_status.to_string(),
+        delivery,
+    })
+}
+
+fn print_delivery_result(result: &DeliverySweepResult) {
+    println!(
+        "Tick delivery checked {}: {}",
+        result.request_id, result.request_status
+    );
+    if result.delivery.committed {
+        println!("  committed: {}", result.delivery.commit_message);
+    } else {
+        println!("  no new commit: worktree had no file changes");
+    }
+    if result.delivery.pushed_with_force_lease {
+        println!(
+            "  pushed branch with --force-with-lease: {}",
+            result.delivery.branch
+        );
+    } else {
+        println!("  pushed branch: {}", result.delivery.branch);
+    }
+    if let Some(url) = &result.delivery.pr_url {
+        println!("  PR: {url}");
+    } else if let Some(compare_url) = &result.delivery.compare_url {
+        println!("  PR creation failed or skipped; manual PR link: {compare_url}");
+    }
+}
+
+fn record_pr_delivery_error(request_id: &str, error: Box<dyn std::error::Error>) -> Result<()> {
+    let mut requests = load_requests()?;
+    let Some(index) = find_request_index(&requests, request_id) else {
+        return Err(format!("unknown request_id: {request_id}").into());
+    };
+    let mut request = requests[index].clone();
+    request.status = STATUS_WAIT_UPDATE_PR.to_string();
+    request.updated_at = now_string();
+    requests[index] = request.clone();
+    save_requests(&requests)?;
+    let reason = format!("PR delivery failed: {error}");
+    write_status_json(&request, "delivery", STATUS_WAIT_UPDATE_PR, &reason)?;
+    append_event(
+        "pr_delivery_failed",
+        &request.request_id,
+        "delivery",
+        STATUS_WAIT_UPDATE_PR,
+        &reason,
+    )?;
+    upsert_session_for_request(&request, "implementation", STATUS_WAIT_UPDATE_PR)?;
+    println!(
+        "Tick delivery checked {}: {}",
+        request.request_id, STATUS_WAIT_UPDATE_PR
+    );
+    println!("  {reason}");
+    Ok(())
+}
+
+fn record_pr_merge_error(request_id: &str, error: Box<dyn std::error::Error>) -> Result<()> {
+    let requests = load_requests()?;
+    let Some(request) = requests
+        .iter()
+        .find(|candidate| candidate.request_id == request_id)
+    else {
+        return Err(format!("unknown request_id: {request_id}").into());
+    };
+    let status = canonical_status(&request.status);
+    let reason = format!("PR merge check failed: {error}");
+    write_status_json(request, "delivery", status, &reason)?;
+    append_event(
+        "pr_merge_failed",
+        &request.request_id,
+        "delivery",
+        status,
+        &reason,
+    )?;
+    println!("PR merge check for {}: skipped", request.request_id);
+    println!("  reason: {reason}");
+    println!("  request status: {status}");
+    Ok(())
+}
+
+fn run_pr_merge_gate(request_id: &str) -> Result<PrMergeOutcome> {
+    let mut requests = load_requests()?;
+    let index = find_request_index(&requests, request_id)
+        .ok_or_else(|| format!("unknown request_id: {request_id}"))?;
+    let mut request = requests[index].clone();
+    request = request_with_delivery_location(&request)?;
     ensure_refreshable_request(&request)?;
-    ensure_gate_approved(&request, "change-doc")?;
+    ensure_pr_delivery_ready(&request)?;
 
     let config = load_config()?;
     let pr_status = run_pr_status_tool(&request, &config)?;
@@ -175,15 +298,18 @@ fn run_pr_merge_gate(
             ),
         )?;
         ("finished".to_string(), "PR already merged".to_string())
-    } else if !auto_merge_enabled {
+    } else if pr_status.status == "unsafe" {
+        let target_id = mark_pr_status_requires_implementation_by_id(
+            request_id,
+            &pr_status,
+            "pr-status-unsafe-before-merge",
+        )?;
         (
-            "skipped".to_string(),
-            "auto merge disabled; pass --auto-merge to allow connector execution".to_string(),
-        )
-    } else if queue_decision != "ready_for_merge" {
-        (
-            "skipped".to_string(),
-            format!("queue decision is {queue_decision}; expected ready_for_merge"),
+            "implementation-refresh".to_string(),
+            format!(
+                "pr-status returned unsafe; returned {target_id} to implementation: {}",
+                pr_status.raw
+            ),
         )
     } else if pr_status.status != "safe" {
         (
@@ -194,14 +320,7 @@ fn run_pr_merge_gate(
             ),
         )
     } else {
-        let report = run_pr_merge_tool(
-            &request,
-            &config,
-            &pr_status,
-            queue_decision,
-            auto_merge_enabled,
-            &decision_id,
-        )?;
+        let report = run_pr_merge_tool(&request, &config, &pr_status, &decision_id)?;
         let action_reason = if report.status == "merged" {
             mark_request_finished_after_merge(
                 &mut requests,
@@ -225,8 +344,6 @@ fn run_pr_merge_gate(
     let decision_path = write_merge_decision_record(MergeDecisionRecord {
         request: &request,
         decision_id: &decision_id,
-        queue_decision,
-        auto_merge_enabled,
         pr_status: &pr_status,
         action: &action,
         reason: &reason,
@@ -249,6 +366,79 @@ fn run_pr_merge_gate(
         decision_path,
         request_status: request.status,
     })
+}
+
+pub(crate) fn ensure_pr_delivery_ready(request: &Request) -> Result<()> {
+    if ensure_gate_approved(request, "change-doc").is_ok() {
+        return Ok(());
+    }
+    if !is_parent_request(request) {
+        ensure_gate_approved(request, "change-doc")?;
+        return Ok(());
+    }
+
+    let requests = load_requests()?;
+    let slices = requests
+        .iter()
+        .filter(|candidate| slice_parent_id(candidate).as_deref() == Some(&request.request_id))
+        .collect::<Vec<_>>();
+    if slices.is_empty() {
+        ensure_gate_approved(request, "change-doc")?;
+        return Ok(());
+    }
+
+    let mut not_ready = Vec::new();
+    for slice in slices {
+        if slice.status != STATUS_SLICE_FINISHED && slice.status != STATUS_FINISHED {
+            not_ready.push(format!("{} status is {}", slice.request_id, slice.status));
+            continue;
+        }
+        if let Err(error) = ensure_gate_approved(slice, "change-doc") {
+            not_ready.push(format!("{} change-doc gate: {error}", slice.request_id));
+        }
+    }
+    if not_ready.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not ready for PR delivery: {}",
+            request.request_id,
+            not_ready.join("; ")
+        )
+        .into())
+    }
+}
+
+fn request_with_delivery_location(request: &Request) -> Result<Request> {
+    if !request.branch.trim().is_empty() && !request.worktree_path.trim().is_empty() {
+        return Ok(request.clone());
+    }
+    if !is_parent_request(request) {
+        return Ok(request.clone());
+    }
+
+    let requests = load_requests()?;
+    let mut slices = requests
+        .iter()
+        .filter(|candidate| {
+            slice_parent_id(candidate).as_deref() == Some(&request.request_id)
+                && !candidate.branch.trim().is_empty()
+                && !candidate.worktree_path.trim().is_empty()
+                && (candidate.status == STATUS_SLICE_FINISHED
+                    || candidate.status == STATUS_FINISHED
+                    || candidate.status == STATUS_WAIT_UPDATE_PR
+                    || candidate.status == STATUS_WAIT_FINISH)
+        })
+        .collect::<Vec<_>>();
+    slices.sort_by(|left, right| left.request_id.cmp(&right.request_id));
+    let Some(slice) = slices.last() else {
+        return Ok(request.clone());
+    };
+
+    let mut resolved = request.clone();
+    resolved.branch = slice.branch.clone();
+    resolved.worktree_path = slice.worktree_path.clone();
+    Ok(resolved)
 }
 
 fn print_pr_merge_outcome(outcome: &PrMergeOutcome) {
@@ -307,8 +497,6 @@ pub(crate) fn run_pr_merge_tool(
     request: &Request,
     config: &Config,
     pr_status: &PrStatusReport,
-    queue_decision: &str,
-    auto_merge_enabled: bool,
     decision_id: &str,
 ) -> Result<PrMergeReport> {
     if !Path::new(PR_MERGE_TOOL).exists() {
@@ -334,11 +522,6 @@ pub(crate) fn run_pr_merge_tool(
         .env("SANDRONE_PR_STATUS_URL", &pr_status.url)
         .env("SANDRONE_PR_STATUS_DETAIL", &pr_status.detail)
         .env("SANDRONE_PR_STATUS_RAW", &pr_status.raw)
-        .env("SANDRONE_QUEUE_DECISION", queue_decision)
-        .env(
-            "SANDRONE_AUTO_MERGE_ENABLED",
-            if auto_merge_enabled { "true" } else { "false" },
-        )
         .env("SANDRONE_SCHEDULER_DECISION_ID", decision_id)
         .envs(proxy_env())
         .output();
@@ -369,8 +552,6 @@ pub(crate) fn run_pr_merge_tool(
 struct MergeDecisionRecord<'a> {
     request: &'a Request,
     decision_id: &'a str,
-    queue_decision: &'a str,
-    auto_merge_enabled: bool,
     pr_status: &'a PrStatusReport,
     action: &'a str,
     reason: &'a str,
@@ -403,15 +584,9 @@ fn write_merge_decision_record(record: MergeDecisionRecord<'_>) -> Result<String
     fs::write(
         &path,
         format!(
-            "{{\n  \"schema_version\": 1,\n  \"decision_id\": \"{}\",\n  \"request_id\": \"{}\",\n  \"queue_decision\": \"{}\",\n  \"auto_merge_enabled\": {},\n  \"pr_status\": \"{}\",\n  \"pr_status_url\": \"{}\",\n  \"pr_status_detail\": \"{}\",\n  \"pr_status_raw\": \"{}\",\n  \"action\": \"{}\",\n  \"reason\": \"{}\",\n  \"merge_status\": \"{}\",\n  \"merge_url\": \"{}\",\n  \"merge_detail\": \"{}\",\n  \"merge_raw\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
+            "{{\n  \"schema_version\": 1,\n  \"decision_id\": \"{}\",\n  \"request_id\": \"{}\",\n  \"pr_status\": \"{}\",\n  \"pr_status_url\": \"{}\",\n  \"pr_status_detail\": \"{}\",\n  \"pr_status_raw\": \"{}\",\n  \"action\": \"{}\",\n  \"reason\": \"{}\",\n  \"merge_status\": \"{}\",\n  \"merge_url\": \"{}\",\n  \"merge_detail\": \"{}\",\n  \"merge_raw\": \"{}\",\n  \"updated_at\": \"{}\"\n}}\n",
             json_escape(record.decision_id),
             json_escape(&record.request.request_id),
-            json_escape(record.queue_decision),
-            if record.auto_merge_enabled {
-                "true"
-            } else {
-                "false"
-            },
             json_escape(&record.pr_status.status),
             json_escape(&record.pr_status.url),
             json_escape(&record.pr_status.detail),
@@ -515,7 +690,7 @@ fn render_pr_review_findings(request: &Request) -> String {
     let mut lines = vec![
         "# 自动评审意见".to_string(),
         String::new(),
-        "本节由 `sandrone finish` 从最终 review detail JSON 生成，方便人类在 PR 页面直接查看 reviewer 的 warning/info 以及必要的上下文。".to_string(),
+        "本节由 Sandrone PR 交付阶段从最终 review detail JSON 生成，方便人类在 PR 页面直接查看 reviewer 的 warning/info 以及必要的上下文。".to_string(),
         String::new(),
     ];
     let mut rendered_stage = false;
